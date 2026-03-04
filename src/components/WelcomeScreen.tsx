@@ -1,5 +1,5 @@
 import React from "react";
-import { Sparkles, Code, Calculator, Lightbulb, Image, Globe } from "lucide-react";
+import { Sparkles, Code, Calculator, Lightbulb, Image, Globe, GraduationCap, Gamepad2, Heart, ShoppingBag, Briefcase, FileText } from "lucide-react";
 
 interface WelcomeScreenProps {
   onSuggestionClick: (text: string) => void;
@@ -14,10 +14,19 @@ const suggestions = [
   { icon: Code, text: "Build a responsive navbar with HTML and CSS", borderColor: "border-neon-red/40", glowColor: "shadow-[0_0_8px_hsl(0_100%_55%/0.12)]", iconColor: "text-neon-red" },
 ];
 
+const pluginModules = [
+  { icon: GraduationCap, label: "📚 Education", text: "You are my tutor. Help me learn and understand topics step by step.", color: "border-neon-cyan/40 hover:bg-neon-cyan/10", iconColor: "text-neon-cyan" },
+  { icon: Gamepad2, label: "🎮 Entertainment", text: "Tell me a funny joke or an interesting story!", color: "border-neon-pink/40 hover:bg-neon-pink/10", iconColor: "text-neon-pink" },
+  { icon: Heart, label: "💪 Health & Fitness", text: "Give me a personalized workout routine and diet plan for today.", color: "border-neon-green/40 hover:bg-neon-green/10", iconColor: "text-neon-green" },
+  { icon: ShoppingBag, label: "🛒 Shopping", text: "Suggest the best budget smartphones under ₹15,000 in 2026.", color: "border-neon-yellow/40 hover:bg-neon-yellow/10", iconColor: "text-neon-yellow" },
+  { icon: Briefcase, label: "💼 Career", text: "Help me prepare for a software engineering interview.", color: "border-neon-purple/40 hover:bg-neon-purple/10", iconColor: "text-neon-purple" },
+  { icon: FileText, label: "📄 Document", text: "Upload a file and I'll summarize, analyze, or create notes from it.", color: "border-neon-red/40 hover:bg-neon-red/10", iconColor: "text-neon-red" },
+];
+
 const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onSuggestionClick }) => {
   return (
-    <div className="flex-1 flex items-center justify-center p-6">
-      <div className="max-w-2xl w-full text-center">
+    <div className="flex-1 overflow-y-auto p-6">
+      <div className="max-w-2xl w-full mx-auto text-center">
         {/* Logo */}
         <div className="mb-6">
           <div className="inline-flex items-center gap-2 mb-3">
@@ -33,8 +42,25 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onSuggestionClick }) => {
           </p>
         </div>
 
+        {/* Plugin Modules */}
+        <div className="mb-8">
+          <p className="text-xs text-muted-foreground mb-3 font-medium uppercase tracking-wider">Quick Modules</p>
+          <div className="flex flex-wrap justify-center gap-2">
+            {pluginModules.map((mod, i) => (
+              <button
+                key={i}
+                onClick={() => onSuggestionClick(mod.text)}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-full border ${mod.color} bg-card/30 backdrop-blur-sm transition-all text-xs font-medium text-foreground`}
+              >
+                <mod.icon className={`w-3.5 h-3.5 ${mod.iconColor}`} />
+                {mod.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Suggestion cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {suggestions.map((s, i) => (
             <button
               key={i}
