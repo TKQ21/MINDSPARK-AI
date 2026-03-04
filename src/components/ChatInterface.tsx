@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Send, Image as ImageIcon, Loader2, Menu, Paperclip } from "lucide-react";
+import { Send, Image as ImageIcon, Loader2, Menu, Paperclip, FileText, CheckCircle } from "lucide-react";
 import MessageBubble, { Message } from "./MessageBubble";
 import ChatSidebar, { Conversation } from "./ChatSidebar";
 import WelcomeScreen from "./WelcomeScreen";
@@ -26,6 +26,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [uploadedFile, setUploadedFile] = useState<{ name: string; url: string; isImage: boolean } | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -70,11 +71,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       return;
     }
 
-    let convId = activeConvId;
-    if (!convId) {
-      convId = createConversation(`File: ${file.name}`);
-    }
-
     // Upload to storage
     const filePath = `${Date.now()}_${file.name}`;
     const { error: uploadError } = await supabase.storage
@@ -92,25 +88,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
 
     const isImage = file.type.startsWith("image/");
 
-    const userMsg: Message = {
-      id: generateId(),
-      role: "user",
-      content: isImage
-        ? `I've uploaded an image: ${file.name}. Please analyze it.`
-        : `I've uploaded a document: ${file.name}. Please analyze it.`,
-      fileName: file.name,
-      imageUrl: isImage ? publicUrl.publicUrl : undefined,
-    };
-
-    setMessagesByConv((prev) => ({
-      ...prev,
-      [convId!]: [...(prev[convId!] || []), userMsg],
-    }));
-
-    setIsLoading(true);
-    const allMessages = [...(messagesByConv[convId] || []), userMsg];
-    await handleStreamChat(allMessages, convId);
-    setIsLoading(false);
+    // Store uploaded file info - don't auto-send
+    setUploadedFile({ name: file.name, url: publicUrl.publicUrl, isImage });
+    toast.success(`📄 ${file.name} uploaded successfully!`);
   };
 
   const handleImageGeneration = async (prompt: string, convId: string) => {
@@ -242,11 +222,27 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       convId = createConversation(messageText.slice(0, 40));
     }
 
-    const userMsg: Message = { id: generateId(), role: "user", content: messageText };
+    // Build user message content
+    let content = messageText;
+    let fileName: string | undefined;
+    let imageUrl: string | undefined;
+
+    if (uploadedFile) {
+      fileName = uploadedFile.name;
+      if (uploadedFile.isImage) {
+        imageUrl = uploadedFile.url;
+        content = `[File: ${uploadedFile.name}]\n\n${messageText}`;
+      } else {
+        content = `[Document: ${uploadedFile.name}]\n\n${messageText}`;
+      }
+      setUploadedFile(null);
+    }
+
+    const userMsg: Message = { id: generateId(), role: "user", content: messageText, fileName, imageUrl };
 
     setMessagesByConv((prev) => ({ ...prev, [convId!]: [...(prev[convId!] || []), userMsg] }));
 
-    const allMessages = [...(messagesByConv[convId] || []), userMsg];
+    const allMessages = [...(messagesByConv[convId] || []), { ...userMsg, content }];
 
     if (isImageRequest(messageText)) {
       await handleImageGeneration(messageText, convId);
@@ -284,8 +280,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         onLogout={handleLogout}
       />
 
-      {/* Main area */}
-      <div className="flex-1 flex flex-col relative z-10 min-w-0">
+      {/* Main area - always full width */}
+      <div className="w-full flex flex-col relative z-10">
         {/* Top bar */}
         <header className="flex items-center gap-3 px-4 py-3 border-b border-neon-cyan/10 bg-background/60 backdrop-blur-md">
           <button
@@ -325,6 +321,24 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
               </div>
             )}
             <div ref={messagesEndRef} />
+          </div>
+        )}
+
+        {/* Uploaded file indicator */}
+        {uploadedFile && (
+          <div className="px-4 pb-2">
+            <div className="max-w-3xl mx-auto flex items-center gap-2 px-3 py-2 rounded-lg bg-neon-green/10 border border-neon-green/30 text-sm">
+              <CheckCircle className="w-4 h-4 text-neon-green flex-shrink-0" />
+              <FileText className="w-4 h-4 text-neon-yellow flex-shrink-0" />
+              <span className="text-foreground truncate">{uploadedFile.name}</span>
+              <span className="text-muted-foreground text-xs">— Type what you want to do with it</span>
+              <button
+                onClick={() => setUploadedFile(null)}
+                className="ml-auto text-muted-foreground hover:text-neon-red text-xs"
+              >
+                ✕
+              </button>
+            </div>
           </div>
         )}
 
@@ -368,7 +382,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Ask anything... (code, math, images, ideas)"
+                placeholder={uploadedFile ? `Ask about "${uploadedFile.name}"...` : "Ask anything... (code, math, images, ideas)"}
                 className="w-full resize-none bg-transparent px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none min-h-[44px] max-h-[150px]"
                 rows={1}
                 disabled={isLoading}
