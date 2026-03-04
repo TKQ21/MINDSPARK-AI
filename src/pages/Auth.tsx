@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable/index";
-import { Sparkles, Mail, Lock, User, Eye, EyeOff, Loader2 } from "lucide-react";
+import { Zap, Mail, Lock, User, Eye, EyeOff, Loader2 } from "lucide-react";
 import StarBackground from "@/components/StarBackground";
 import { toast } from "sonner";
 
@@ -61,21 +61,41 @@ const Auth: React.FC = () => {
       <StarBackground />
 
       <div className="relative z-10 w-full max-w-md mx-4">
-        {/* Logo */}
+        {/* Logo Icon */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center gap-2 mb-3">
-            <Sparkles className="w-10 h-10 text-primary animate-pulse-glow" />
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl mb-4 animate-pulse-glow"
+            style={{
+              background: 'linear-gradient(135deg, hsl(270 100% 60%), hsl(180 100% 50%))',
+              boxShadow: '0 0 25px hsl(270 100% 60% / 0.4), 0 0 50px hsl(180 100% 50% / 0.2)',
+            }}
+          >
+            <Zap className="w-8 h-8 text-white" />
           </div>
-          <h1 className="font-orbitron text-3xl font-bold text-primary text-glow-cyan">
+          <h1
+            className="font-orbitron text-3xl font-bold"
+            style={{
+              background: 'linear-gradient(90deg, hsl(180 100% 50%), hsl(330 100% 71%), hsl(55 100% 50%))',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              filter: 'drop-shadow(0 0 8px hsl(180 100% 50% / 0.3))',
+            }}
+          >
             MINDSPARK AI
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            {isLogin ? "Welcome back, explorer" : "Join the future of AI"}
+            {isLogin ? "Welcome back!" : "Join the future of AI"}
           </p>
         </div>
 
         {/* Auth Card */}
-        <div className="rounded-2xl p-6 bg-card/80 backdrop-blur-md border border-neon-cyan/20 glow-cyan">
+        <div
+          className="rounded-2xl p-6 backdrop-blur-md"
+          style={{
+            background: 'hsl(230 20% 12% / 0.85)',
+            border: '1px solid hsl(180 100% 50% / 0.15)',
+            boxShadow: '0 0 30px hsl(180 100% 50% / 0.08), inset 0 0 30px hsl(180 100% 50% / 0.03)',
+          }}
+        >
           <form onSubmit={handleEmailAuth} className="space-y-4">
             {!isLogin && (
               <div className="relative">
@@ -85,20 +105,48 @@ const Auth: React.FC = () => {
                   placeholder="Full Name"
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 rounded-xl bg-muted/50 border border-neon-green/30 text-foreground placeholder:text-muted-foreground text-sm focus:outline-none focus:border-neon-green/60 transition-colors"
+                  className="w-full pl-10 pr-4 py-3 rounded-xl text-sm focus:outline-none transition-all"
+                  style={{
+                    background: 'hsl(230 15% 18% / 0.6)',
+                    border: '1px solid hsl(120 100% 55% / 0.25)',
+                    color: 'hsl(210 40% 92%)',
+                    boxShadow: '0 0 8px hsl(120 100% 55% / 0.05)',
+                  }}
+                  onFocus={(e) => {
+                    e.target.style.borderColor = 'hsl(120 100% 55% / 0.5)';
+                    e.target.style.boxShadow = '0 0 15px hsl(120 100% 55% / 0.15)';
+                  }}
+                  onBlur={(e) => {
+                    e.target.style.borderColor = 'hsl(120 100% 55% / 0.25)';
+                    e.target.style.boxShadow = '0 0 8px hsl(120 100% 55% / 0.05)';
+                  }}
                   required
                 />
               </div>
             )}
 
             <div className="relative">
-              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neon-pink" />
+              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neon-cyan" />
               <input
                 type="email"
                 placeholder="Email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 rounded-xl bg-muted/50 border border-neon-pink/30 text-foreground placeholder:text-muted-foreground text-sm focus:outline-none focus:border-neon-pink/60 transition-colors"
+                className="w-full pl-10 pr-4 py-3 rounded-xl text-sm focus:outline-none transition-all"
+                style={{
+                  background: 'hsl(230 15% 18% / 0.6)',
+                  border: '1px solid hsl(180 100% 50% / 0.25)',
+                  color: 'hsl(210 40% 92%)',
+                  boxShadow: '0 0 8px hsl(180 100% 50% / 0.05)',
+                }}
+                onFocus={(e) => {
+                  e.target.style.borderColor = 'hsl(180 100% 50% / 0.5)';
+                  e.target.style.boxShadow = '0 0 15px hsl(180 100% 50% / 0.15)';
+                }}
+                onBlur={(e) => {
+                  e.target.style.borderColor = 'hsl(180 100% 50% / 0.25)';
+                  e.target.style.boxShadow = '0 0 8px hsl(180 100% 50% / 0.05)';
+                }}
                 required
               />
             </div>
@@ -110,14 +158,28 @@ const Auth: React.FC = () => {
                 placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full pl-10 pr-12 py-3 rounded-xl bg-muted/50 border border-neon-purple/30 text-foreground placeholder:text-muted-foreground text-sm focus:outline-none focus:border-neon-purple/60 transition-colors"
+                className="w-full pl-10 pr-12 py-3 rounded-xl text-sm focus:outline-none transition-all"
+                style={{
+                  background: 'hsl(230 15% 18% / 0.6)',
+                  border: '1px solid hsl(270 100% 60% / 0.25)',
+                  color: 'hsl(210 40% 92%)',
+                  boxShadow: '0 0 8px hsl(270 100% 60% / 0.05)',
+                }}
+                onFocus={(e) => {
+                  e.target.style.borderColor = 'hsl(270 100% 60% / 0.5)';
+                  e.target.style.boxShadow = '0 0 15px hsl(270 100% 60% / 0.15)';
+                }}
+                onBlur={(e) => {
+                  e.target.style.borderColor = 'hsl(270 100% 60% / 0.25)';
+                  e.target.style.boxShadow = '0 0 8px hsl(270 100% 60% / 0.05)';
+                }}
                 required
                 minLength={6}
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
@@ -126,7 +188,12 @@ const Auth: React.FC = () => {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 rounded-xl bg-primary text-primary-foreground font-semibold text-sm hover:opacity-90 transition-opacity disabled:opacity-40 glow-cyan flex items-center justify-center gap-2"
+              className="w-full py-3 rounded-xl font-semibold text-sm transition-all disabled:opacity-40 flex items-center justify-center gap-2"
+              style={{
+                background: 'linear-gradient(135deg, hsl(270 100% 60%), hsl(180 100% 50%))',
+                color: 'white',
+                boxShadow: '0 0 20px hsl(270 100% 60% / 0.3), 0 0 40px hsl(180 100% 50% / 0.15)',
+              }}
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
               {isLogin ? "Sign In" : "Sign Up"}
@@ -134,15 +201,21 @@ const Auth: React.FC = () => {
           </form>
 
           <div className="my-5 flex items-center gap-3">
-            <div className="flex-1 h-px bg-border" />
-            <span className="text-xs text-muted-foreground">or</span>
-            <div className="flex-1 h-px bg-border" />
+            <div className="flex-1 h-px" style={{ background: 'linear-gradient(90deg, transparent, hsl(230 15% 30%), transparent)' }} />
+            <span className="text-xs text-muted-foreground uppercase tracking-wider">OR</span>
+            <div className="flex-1 h-px" style={{ background: 'linear-gradient(90deg, transparent, hsl(230 15% 30%), transparent)' }} />
           </div>
 
           <button
             onClick={handleGoogleLogin}
             disabled={loading}
-            className="w-full py-3 rounded-xl bg-muted/50 border border-neon-yellow/30 text-foreground font-medium text-sm hover:bg-muted transition-colors disabled:opacity-40 flex items-center justify-center gap-2"
+            className="w-full py-3 rounded-xl font-medium text-sm transition-all disabled:opacity-40 flex items-center justify-center gap-2"
+            style={{
+              background: 'hsl(230 15% 18% / 0.6)',
+              border: '1px solid hsl(55 100% 50% / 0.2)',
+              color: 'hsl(210 40% 92%)',
+              boxShadow: '0 0 8px hsl(55 100% 50% / 0.05)',
+            }}
           >
             <svg className="w-4 h-4" viewBox="0 0 24 24">
               <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" />
@@ -157,7 +230,12 @@ const Auth: React.FC = () => {
             {isLogin ? "Don't have an account?" : "Already have an account?"}
             <button
               onClick={() => setIsLogin(!isLogin)}
-              className="text-primary hover:underline ml-1 font-medium"
+              className="ml-1 font-medium hover:underline"
+              style={{
+                background: 'linear-gradient(90deg, hsl(180 100% 50%), hsl(330 100% 71%))',
+                WebkitBackgroundClip: 'text',
+                WebkitTextFillColor: 'transparent',
+              }}
             >
               {isLogin ? "Sign Up" : "Sign In"}
             </button>

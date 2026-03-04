@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Copy, Check, Bot, User, FileText } from "lucide-react";
 
 export interface Message {
@@ -36,7 +37,6 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
   const [copied, setCopied] = useState(false);
   const isBot = message.role === "assistant";
 
-  // Pick color based on message id hash
   const colorIndex = message.id.charCodeAt(0) % neonBorderColors.length;
 
   const handleCopy = () => {
@@ -76,7 +76,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
 
           {isBot ? (
             <div className="prose-neon text-sm leading-relaxed">
-              <ReactMarkdown>{message.content}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
             </div>
           ) : (
             <p className="text-sm leading-relaxed text-foreground">{message.content}</p>
