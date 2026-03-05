@@ -1,5 +1,5 @@
-import React from "react";
-import { Plus, MessageSquare, Trash2, Sparkles, LogOut, User, X } from "lucide-react";
+import React, { useState } from "react";
+import { Plus, MessageSquare, Trash2, Sparkles, LogOut, User, X, Pencil, Check } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 export interface Conversation {
@@ -14,6 +14,7 @@ interface ChatSidebarProps {
   onSelect: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
+  onRename: (id: string, newTitle: string) => void;
   isOpen: boolean;
   onToggle: () => void;
   userName?: string;
@@ -26,14 +27,30 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
   onSelect,
   onNew,
   onDelete,
+  onRename,
   isOpen,
   onToggle,
   userName,
   onLogout,
 }) => {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+
+  const startEdit = (conv: Conversation, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingId(conv.id);
+    setEditTitle(conv.title);
+  };
+
+  const confirmEdit = (id: string) => {
+    if (editTitle.trim()) {
+      onRename(id, editTitle.trim());
+    }
+    setEditingId(null);
+  };
+
   return (
     <>
-      {/* Overlay */}
       <AnimatePresence>
         {isOpen && (
           <motion.div
@@ -95,7 +112,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
               {conversations.map((conv) => (
                 <div
                   key={conv.id}
-                  onClick={() => onSelect(conv.id)}
+                  onClick={() => editingId !== conv.id && onSelect(conv.id)}
                   className={`group flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-all text-sm ${
                     activeId === conv.id
                       ? "bg-neon-cyan/10 border border-neon-cyan/20 text-foreground"
@@ -103,16 +120,44 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
                   }`}
                 >
                   <MessageSquare className="w-4 h-4 flex-shrink-0" />
-                  <span className="truncate flex-1">{conv.title}</span>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDelete(conv.id);
-                    }}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:text-neon-red"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
+                  {editingId === conv.id ? (
+                    <input
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") confirmEdit(conv.id);
+                        if (e.key === "Escape") setEditingId(null);
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      autoFocus
+                      className="flex-1 bg-transparent border-b border-neon-cyan/40 outline-none text-sm text-foreground px-0 py-0"
+                    />
+                  ) : (
+                    <span className="truncate flex-1">{conv.title}</span>
+                  )}
+                  <div className="flex items-center gap-0.5">
+                    {editingId === conv.id ? (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); confirmEdit(conv.id); }}
+                        className="p-1 hover:text-neon-green transition-colors"
+                      >
+                        <Check className="w-3 h-3" />
+                      </button>
+                    ) : (
+                      <button
+                        onClick={(e) => startEdit(conv, e)}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:text-neon-cyan"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
+                    )}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onDelete(conv.id); }}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1 hover:text-neon-red"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
