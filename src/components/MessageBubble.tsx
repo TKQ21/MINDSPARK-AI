@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Copy, Check, Bot, User, FileText } from "lucide-react";
+import { Copy, Check, Bot, User, FileText, Download } from "lucide-react";
 
 export interface Message {
   id: string;
@@ -45,6 +45,25 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleDownloadImage = async () => {
+    if (!message.imageUrl) return;
+    try {
+      const response = await fetch(message.imageUrl);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `mindspark-image-${Date.now()}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {
+      // fallback: open in new tab
+      window.open(message.imageUrl, "_blank");
+    }
+  };
+
   return (
     <div className={`flex gap-3 ${isBot ? "" : "flex-row-reverse"} group`}>
       {/* Avatar */}
@@ -83,12 +102,19 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
           )}
 
           {message.imageUrl && (
-            <div className="mt-3">
+            <div className="mt-3 relative group/img">
               <img
                 src={message.imageUrl}
                 alt="Generated"
                 className="rounded-lg max-w-full border border-neon-purple/30"
               />
+              <button
+                onClick={handleDownloadImage}
+                className="absolute top-2 right-2 p-2 rounded-lg bg-background/80 backdrop-blur-sm border border-neon-cyan/30 text-neon-cyan hover:bg-neon-cyan/20 transition-all opacity-0 group-hover/img:opacity-100"
+                title="Download image"
+              >
+                <Download className="w-4 h-4" />
+              </button>
             </div>
           )}
         </div>
