@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Copy, Check, Bot, User, FileText, Download } from "lucide-react";
+import { Copy, Check, Bot, User, FileText, Download, Volume2, VolumeX } from "lucide-react";
 
 export interface Message {
   id: string;
@@ -35,6 +35,7 @@ const neonGlowStyles = [
 
 const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
   const [copied, setCopied] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
   const isBot = message.role === "assistant";
 
   const colorIndex = message.id.charCodeAt(0) % neonBorderColors.length;
@@ -59,9 +60,43 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch {
-      // fallback: open in new tab
       window.open(message.imageUrl, "_blank");
     }
+  };
+
+  const handleSpeak = () => {
+    if (isSpeaking) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+      return;
+    }
+    // Strip markdown for cleaner speech
+    const plainText = message.content
+      .replace(/#{1,6}\s/g, "")
+      .replace(/\*\*(.*?)\*\*/g, "$1")
+      .replace(/\*(.*?)\*/g, "$1")
+      .replace(/`{1,3}[^`]*`{1,3}/g, "")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      .replace(/[|_~>-]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const utterance = new SpeechSynthesisUtterance(plainText);
+    utterance.lang = "hi-IN";
+    utterance.rate = 1;
+    utterance.pitch = 1;
+
+    // Try to pick a good voice
+    const voices = window.speechSynthesis.getVoices();
+    const hindiVoice = voices.find(v => v.lang.startsWith("hi"));
+    const englishVoice = voices.find(v => v.lang.startsWith("en") && v.name.includes("Google"));
+    utterance.voice = hindiVoice || englishVoice || voices[0] || null;
+
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+
+    setIsSpeaking(true);
+    window.speechSynthesis.speak(utterance);
   };
 
   return (
@@ -119,22 +154,24 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
           )}
         </div>
 
-        {/* Copy button */}
+        {/* Action buttons */}
         {isBot && message.content && (
-          <button
-            onClick={handleCopy}
-            className="mt-1 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 text-xs text-muted-foreground hover:text-neon-cyan px-2 py-1 rounded"
-          >
-            {copied ? (
-              <>
-                <Check className="w-3 h-3" /> Copied
-              </>
-            ) : (
-              <>
-                <Copy className="w-3 h-3" /> Copy
-              </>
-            )}
-          </button>
+          <div className="mt-1 opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-2">
+            <button
+              onClick={handleCopy}
+              className="flex items-center gap-1 text-xs text-muted-foreground hover:text-neon-cyan px-2 py-1 rounded"
+            >
+              {copied ? <><Check className="w-3 h-3" /> Copied</> : <><Copy className="w-3 h-3" /> Copy</>}
+            </button>
+            <button
+              onClick={handleSpeak}
+              className={`flex items-center gap-1 text-xs px-2 py-1 rounded transition-colors ${
+                isSpeaking ? "text-neon-pink" : "text-muted-foreground hover:text-neon-green"
+              }`}
+            >
+              {isSpeaking ? <><VolumeX className="w-3 h-3" /> Stop</> : <><Volume2 className="w-3 h-3" /> Speak</>}
+            </button>
+          </div>
         )}
       </div>
     </div>

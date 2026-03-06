@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Image as ImageIcon, Loader2, Menu, Paperclip, FileText, CheckCircle } from "lucide-react";
+import { Send, Image as ImageIcon, Loader2, Menu, Paperclip, FileText, CheckCircle, Mic, MicOff } from "lucide-react";
 import MessageBubble, { Message } from "./MessageBubble";
 import ChatSidebar, { Conversation } from "./ChatSidebar";
 import WelcomeScreen from "./WelcomeScreen";
@@ -27,6 +27,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
   const navigate = useNavigate();
 
   const messages = activeConvId ? messagesByConv[activeConvId] || [] : [];
@@ -304,6 +306,56 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
 
+  // Voice input using Web Speech API
+  const toggleVoiceInput = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      toast.error("Your browser doesn't support voice input.");
+      return;
+    }
+
+    if (isListening) {
+      recognitionRef.current?.stop();
+      setIsListening(false);
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = "hi-IN"; // Hindi + English mixed
+    recognition.interimResults = true;
+    recognition.continuous = true;
+    recognitionRef.current = recognition;
+
+    let finalTranscript = input;
+
+    recognition.onresult = (event: any) => {
+      let interim = "";
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscript += transcript + " ";
+        } else {
+          interim = transcript;
+        }
+      }
+      setInput(finalTranscript + interim);
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error("Speech error:", event.error);
+      setIsListening(false);
+      if (event.error === "not-allowed") toast.error("Microphone access denied.");
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+    };
+
+    recognition.start();
+    setIsListening(true);
+    toast.success("🎤 Listening... Speak now!");
+  };
+
   return (
     <div className="flex h-screen w-full relative overflow-hidden">
       <StarBackground />
@@ -392,6 +444,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
               title="Generate image"
             >
               <ImageIcon className="w-4 h-4 text-neon-pink" />
+            </button>
+            <button
+              onClick={toggleVoiceInput}
+              disabled={isLoading}
+              className={`flex-shrink-0 w-11 h-11 rounded-xl border bg-card/50 flex items-center justify-center transition-all disabled:opacity-40 ${
+                isListening
+                  ? "border-neon-red/60 bg-neon-red/20 glow-pink animate-pulse"
+                  : "border-neon-green/30 hover:bg-neon-green/10 hover:border-neon-green/50"
+              }`}
+              title={isListening ? "Stop listening" : "Voice input"}
+            >
+              {isListening ? <MicOff className="w-4 h-4 text-neon-red" /> : <Mic className="w-4 h-4 text-neon-green" />}
             </button>
             <div className="flex-1 relative rounded-xl bg-card/50 border border-neon-cyan/20 hover:border-neon-cyan/40 transition-colors" style={{ boxShadow: "inset 0 0 20px hsl(180 100% 50% / 0.03), 0 0 12px hsl(180 100% 50% / 0.08)" }}>
               <textarea
