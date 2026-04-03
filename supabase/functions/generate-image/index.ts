@@ -10,12 +10,26 @@ serve(async (req) => {
 
   try {
     const { prompt } = await req.json();
+    if (!prompt || typeof prompt !== "string") {
+      return new Response(JSON.stringify({ error: "A valid prompt is required." }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
 
-    const enhancedPrompt = `Generate a highly detailed, photorealistic, professional quality image: ${prompt}. 
-Style: Ultra high resolution, cinematic lighting, sharp details, vivid colors, professional photography quality.
-Make it look as realistic and authentic as possible.`;
+    const enhancedPrompt = `Create a polished, high-resolution image that follows the user's request exactly.
+
+User request:
+${prompt.trim()}
+
+Rules:
+- Preserve the requested style, medium, mood, lighting, and composition.
+- If a specific place, landmark, school, hospital, hotel, or location is mentioned, depict a believable and recognizable real-world style representation of it.
+- Do not add text, watermarks, captions, or symbols unless the user explicitly asks for them.
+- Keep important faces, hands, and subjects fully visible unless the user requests a crop.
+- Output should be visually coherent, detailed, and clean.`;
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",

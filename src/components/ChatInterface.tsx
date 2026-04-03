@@ -11,6 +11,7 @@ import { useNavigate } from "react-router-dom";
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`;
 const IMAGE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-image`;
 const PARSE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/parse-document`;
+const unreadableFileMessage = "File received, but content could not be read. Please try re-uploading.";
 
 interface ChatInterfaceProps {
   userName?: string;
@@ -25,6 +26,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [uploadedFile, setUploadedFile] = useState<{ name: string; url: string; isImage: boolean } | null>(null);
   const [documentContext, setDocumentContext] = useState<string | null>(null);
+  const [documentContexts, setDocumentContexts] = useState<Record<string, string>>({});
+  const [pendingDocumentContext, setPendingDocumentContext] = useState<string | null>(null);
+  const [documentReadError, setDocumentReadError] = useState<string | null>(null);
   const [isParsingDoc, setIsParsingDoc] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -35,6 +39,25 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   const navigate = useNavigate();
 
   const messages = activeConvId ? messagesByConv[activeConvId] || [] : [];
+
+  const setLatestDocumentContext = useCallback((conversationId: string | null, nextContext: string | null) => {
+    if (conversationId) {
+      setDocumentContexts((prev) => {
+        const next = { ...prev };
+        if (nextContext) next[conversationId] = nextContext;
+        else delete next[conversationId];
+        return next;
+      });
+    } else {
+      setPendingDocumentContext(nextContext);
+    }
+
+    setDocumentContext(nextContext);
+  }, []);
+
+  const clearLatestDocumentContext = useCallback((conversationId: string | null) => {
+    setLatestDocumentContext(conversationId, null);
+  }, [setLatestDocumentContext]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -80,6 +103,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     };
     loadMessages();
   }, [activeConvId]);
+
+  useEffect(() => {
+    if (activeConvId) {
+      setDocumentContext(documentContexts[activeConvId] ?? null);
+      return;
+    }
+
+    setDocumentContext(pendingDocumentContext);
+  }, [activeConvId, documentContexts, pendingDocumentContext]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -130,7 +162,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     await supabase.from("conversations").delete().eq("id", id);
     setConversations((prev) => prev.filter((c) => c.id !== id));
     setMessagesByConv((prev) => { const next = { ...prev }; delete next[id]; return next; });
-    if (activeConvId === id) setActiveConvId(null);
+    setDocumentContexts((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    if (activeConvId === id) {
+      setActiveConvId(null);
+      setUploadedFile(null);
+      setDocumentReadError(null);
+    }
   };
 
   const isImageRequest = (text: string) => {
@@ -148,11 +189,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     );
   };
 
-  // Parse document using Gemini multimodal
-  const parseDocument = async (fileUrl: string, fileName: string): Promise<string | null> => {
+  const parseDocument = async (fileUrl: string, fileName: string): Promise<{ text: string | null; error: string | null }> => {
     try {
       setIsParsingDoc(true);
-      toast.info("📄 Analyzing document...");
       const resp = await fetch(PARSE_URL, {
         method: "POST",
         headers: {
@@ -161,19 +200,22 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         },
         body: JSON.stringify({ fileUrl, fileName }),
       });
+      const data = await resp.json().catch(() => ({}));
+
       if (!resp.ok) {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(err.error || "Failed to parse document");
+        throw new Error(typeof data.error === "string" ? data.error : unreadableFileMessage);
       }
-      const data = await resp.json();
-      if (data.success && data.text) {
-        toast.success("✅ Document analyzed successfully!");
-        return data.text;
+
+      if (data.success && typeof data.text === "string" && data.text.trim()) {
+        return { text: data.text, error: null };
       }
-      throw new Error("Could not extract text from document");
+
+      throw new Error(unreadableFileMessage);
     } catch (e: any) {
-      toast.error(`Document analysis failed: ${e.message}`);
-      return null;
+      return {
+        text: null,
+        error: e?.message || unreadableFileMessage,
+      };
     } finally {
       setIsParsingDoc(false);
     }
@@ -184,23 +226,28 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       toast.error("File too large. Max 20MB.");
       return;
     }
+
+    setDocumentReadError(null);
+
     const filePath = `${Date.now()}_${file.name}`;
     const { error: uploadError } = await supabase.storage.from("chat-uploads").upload(filePath, file);
     if (uploadError) { toast.error("Upload failed: " + uploadError.message); return; }
     const { data: publicUrl } = supabase.storage.from("chat-uploads").getPublicUrl(filePath);
     const isImage = file.type.startsWith("image/");
-    
+
     setUploadedFile({ name: file.name, url: publicUrl.publicUrl, isImage });
 
-    // Auto-parse non-image documents
-    if (!isImage) {
-      const extractedText = await parseDocument(publicUrl.publicUrl, file.name);
-      if (extractedText) {
-        setDocumentContext(extractedText);
-      }
+    const { text: extractedText, error: parseError } = await parseDocument(publicUrl.publicUrl, file.name);
+
+    if (extractedText) {
+      setLatestDocumentContext(activeConvId, extractedText);
+      toast.success("📄 File uploaded successfully. What should I do with it?");
+      return;
     }
 
-    toast.success(`📄 ${file.name} uploaded successfully! Ask any question about it.`);
+    clearLatestDocumentContext(activeConvId);
+    setDocumentReadError(parseError || unreadableFileMessage);
+    toast.error(parseError || unreadableFileMessage);
   };
 
   const handleImageGeneration = async (prompt: string, convId: string) => {
@@ -316,25 +363,27 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         convId = await createConversation(messageText.slice(0, 40));
       }
 
+      const wantsGeneratedImage = isImageRequest(messageText);
       let content = messageText;
       let fileName: string | undefined;
       let imageUrl: string | undefined;
-      let currentDocContext = documentContext;
+      let currentDocContext = documentContexts[convId] ?? null;
+
+      if (!currentDocContext && pendingDocumentContext) {
+        currentDocContext = pendingDocumentContext;
+        setDocumentContexts((prev) => ({ ...prev, [convId!]: pendingDocumentContext }));
+        setPendingDocumentContext(null);
+      }
+
+      if (currentDocContext) {
+        setDocumentContext(currentDocContext);
+      }
 
       if (uploadedFile) {
         fileName = uploadedFile.name;
         if (uploadedFile.isImage) {
           imageUrl = uploadedFile.url;
-          // For images, parse them too for visual Q&A
-          if (!currentDocContext) {
-            const imgText = await parseDocument(uploadedFile.url, uploadedFile.name);
-            if (imgText) currentDocContext = imgText;
-          }
-          content = messageText;
-        } else {
-          content = messageText;
         }
-        setUploadedFile(null);
       }
 
       const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: messageText, fileName, imageUrl };
@@ -343,15 +392,31 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
 
       const allMessages = [...(messagesByConv[convId] || []), userMsg];
 
-      if (isImageRequest(messageText) && !currentDocContext) {
+      if (!currentDocContext && documentReadError && uploadedFile && !wantsGeneratedImage) {
+        const botMsg: Message = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: documentReadError,
+        };
+        setMessagesByConv((prev) => ({ ...prev, [convId!]: [...(prev[convId!] || []), botMsg] }));
+        await saveMessageToDB(convId, botMsg);
+        setUploadedFile(null);
+        setDocumentReadError(null);
+        return;
+      }
+
+      setUploadedFile(null);
+
+      if (wantsGeneratedImage) {
         await handleImageGeneration(messageText, convId);
       } else {
         await handleStreamChat(allMessages, convId, currentDocContext);
       }
     } catch (e: any) {
       toast.error(e.message || "Something went wrong");
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -412,8 +477,19 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       <ChatSidebar
         conversations={conversations}
         activeId={activeConvId}
-        onSelect={(id) => { setActiveConvId(id); setSidebarOpen(false); setDocumentContext(null); }}
-        onNew={() => { setActiveConvId(null); setSidebarOpen(false); setDocumentContext(null); }}
+        onSelect={(id) => {
+          setActiveConvId(id);
+          setSidebarOpen(false);
+          setUploadedFile(null);
+          setDocumentReadError(null);
+        }}
+        onNew={() => {
+          setActiveConvId(null);
+          setSidebarOpen(false);
+          setUploadedFile(null);
+          setDocumentReadError(null);
+          clearLatestDocumentContext(null);
+        }}
         onDelete={handleDeleteConversation}
         onRename={handleRenameConversation}
         isOpen={sidebarOpen}
@@ -430,10 +506,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
           <h2 className="text-sm font-orbitron font-bold bg-gradient-to-r from-neon-cyan via-neon-pink to-neon-yellow bg-clip-text text-transparent truncate">
             {activeConvId ? conversations.find((c) => c.id === activeConvId)?.title || "Chat" : "MINDSPARK AI"}
           </h2>
-          {documentContext && (
+          {documentContext && !documentReadError && (
             <span className="ml-auto text-xs px-2 py-1 rounded-full bg-neon-green/10 border border-neon-green/30 text-neon-green flex items-center gap-1">
-              <FileText className="w-3 h-3" /> Document loaded
-              <button onClick={() => setDocumentContext(null)} className="ml-1 hover:text-neon-red">✕</button>
+              <FileText className="w-3 h-3" /> Recent document ready
+              <button
+                onClick={() => {
+                  clearLatestDocumentContext(activeConvId);
+                  setDocumentReadError(null);
+                }}
+                className="ml-1 hover:text-neon-red"
+              >
+                ✕
+              </button>
             </span>
           )}
         </header>
@@ -471,10 +555,21 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
               <span className="text-foreground truncate">{uploadedFile.name}</span>
               {isParsingDoc ? (
                 <span className="text-muted-foreground text-xs flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Analyzing...</span>
+              ) : documentReadError ? (
+                <span className="text-neon-red text-xs">— {documentReadError}</span>
               ) : (
-                <span className="text-muted-foreground text-xs">— Ready! Ask anything about it</span>
+                <span className="text-muted-foreground text-xs">— What should I do with it?</span>
               )}
-              <button onClick={() => { setUploadedFile(null); setDocumentContext(null); }} className="ml-auto text-muted-foreground hover:text-neon-red text-xs">✕</button>
+              <button
+                onClick={() => {
+                  setUploadedFile(null);
+                  setDocumentReadError(null);
+                  clearLatestDocumentContext(activeConvId);
+                }}
+                className="ml-auto text-muted-foreground hover:text-neon-red text-xs"
+              >
+                ✕
+              </button>
             </div>
           </div>
         )}
@@ -502,7 +597,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={documentContext ? "Ask anything about the uploaded document..." : "Ask MINDSPARK AI anything..."}
+                placeholder={documentContext && !documentReadError ? "Ask anything about the uploaded document..." : "Ask MINDSPARK AI anything..."}
                 className="w-full bg-card/50 border border-neon-cyan/20 rounded-xl px-4 py-3 text-foreground resize-none focus:outline-none focus:border-neon-cyan/50 focus:shadow-[0_0_12px_hsl(var(--neon-cyan)/0.15)] transition-all placeholder:text-muted-foreground/60"
                 rows={1}
                 disabled={isLoading || isParsingDoc}
