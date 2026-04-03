@@ -10,6 +10,7 @@ import { useNavigate } from "react-router-dom";
 
 const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`;
 const IMAGE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-image`;
+const PARSE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/parse-document`;
 
 interface ChatInterfaceProps {
   userName?: string;
@@ -23,6 +24,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [uploadedFile, setUploadedFile] = useState<{ name: string; url: string; isImage: boolean } | null>(null);
+  const [documentContext, setDocumentContext] = useState<string | null>(null);
+  const [isParsingDoc, setIsParsingDoc] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -33,14 +36,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
 
   const messages = activeConvId ? messagesByConv[activeConvId] || [] : [];
 
-  // Get user ID
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) setUserId(session.user.id);
     });
   }, []);
 
-  // Load conversations from DB
   useEffect(() => {
     if (!userId) return;
     const loadConversations = async () => {
@@ -56,7 +57,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     loadConversations();
   }, [userId]);
 
-  // Load messages when active conv changes
   useEffect(() => {
     if (!activeConvId || messagesByConv[activeConvId]) return;
     const loadMessages = async () => {
@@ -137,14 +137,46 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     const lower = text.toLowerCase();
     return (
       lower.includes("generate") || lower.includes("create") || lower.includes("draw") ||
-      lower.includes("make") || lower.includes("banao") || lower.includes("bana")
+      lower.includes("make") || lower.includes("banao") || lower.includes("bana") ||
+      lower.includes("dikha") || lower.includes("show")
     ) && (
       lower.includes("image") || lower.includes("picture") || lower.includes("photo") ||
       lower.includes("illustration") || lower.includes("tasveer") || lower.includes("pic") ||
       lower.includes("wallpaper") || lower.includes("poster") || lower.includes("art") ||
       lower.includes("logo") || lower.includes("icon") || lower.includes("sketch") ||
-      lower.includes("painting") || lower.includes("banner")
+      lower.includes("painting") || lower.includes("banner") || lower.includes("design")
     );
+  };
+
+  // Parse document using Gemini multimodal
+  const parseDocument = async (fileUrl: string, fileName: string): Promise<string | null> => {
+    try {
+      setIsParsingDoc(true);
+      toast.info("📄 Analyzing document...");
+      const resp = await fetch(PARSE_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+        },
+        body: JSON.stringify({ fileUrl, fileName }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        throw new Error(err.error || "Failed to parse document");
+      }
+      const data = await resp.json();
+      if (data.success && data.text) {
+        toast.success("✅ Document analyzed successfully!");
+        return data.text;
+      }
+      throw new Error("Could not extract text from document");
+    } catch (e: any) {
+      toast.error(`Document analysis failed: ${e.message}`);
+      return null;
+    } finally {
+      setIsParsingDoc(false);
+    }
   };
 
   const handleFileUpload = async (file: File) => {
@@ -157,8 +189,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     if (uploadError) { toast.error("Upload failed: " + uploadError.message); return; }
     const { data: publicUrl } = supabase.storage.from("chat-uploads").getPublicUrl(filePath);
     const isImage = file.type.startsWith("image/");
+    
     setUploadedFile({ name: file.name, url: publicUrl.publicUrl, isImage });
-    toast.success(`📄 ${file.name} uploaded successfully!`);
+
+    // Auto-parse non-image documents
+    if (!isImage) {
+      const extractedText = await parseDocument(publicUrl.publicUrl, file.name);
+      if (extractedText) {
+        setDocumentContext(extractedText);
+      }
+    }
+
+    toast.success(`📄 ${file.name} uploaded successfully! Ask any question about it.`);
   };
 
   const handleImageGeneration = async (prompt: string, convId: string) => {
@@ -188,16 +230,21 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     }
   };
 
-  const handleStreamChat = async (allMessages: Message[], convId: string) => {
+  const handleStreamChat = async (allMessages: Message[], convId: string, docCtx: string | null) => {
     try {
       const apiMessages = allMessages.map((m) => ({ role: m.role, content: m.content }));
+      const body: any = { messages: apiMessages };
+      if (docCtx) {
+        body.documentContext = docCtx;
+      }
+
       const resp = await fetch(CHAT_URL, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
         },
-        body: JSON.stringify({ messages: apiMessages }),
+        body: JSON.stringify(body),
       });
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
@@ -247,7 +294,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
           }
         }
       }
-      // Save final assistant message to DB
       if (assistantSoFar) {
         await saveMessageToDB(convId, { id: botId, role: "assistant", content: assistantSoFar });
       }
@@ -273,14 +319,20 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       let content = messageText;
       let fileName: string | undefined;
       let imageUrl: string | undefined;
+      let currentDocContext = documentContext;
 
       if (uploadedFile) {
         fileName = uploadedFile.name;
         if (uploadedFile.isImage) {
           imageUrl = uploadedFile.url;
-          content = `[File: ${uploadedFile.name}]\n\n${messageText}`;
+          // For images, parse them too for visual Q&A
+          if (!currentDocContext) {
+            const imgText = await parseDocument(uploadedFile.url, uploadedFile.name);
+            if (imgText) currentDocContext = imgText;
+          }
+          content = messageText;
         } else {
-          content = `[Document: ${uploadedFile.name} - URL: ${uploadedFile.url}]\n\nUser question: ${messageText}\n\nPlease analyze this document and answer the question based on its content.`;
+          content = messageText;
         }
         setUploadedFile(null);
       }
@@ -289,12 +341,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       setMessagesByConv((prev) => ({ ...prev, [convId!]: [...(prev[convId!] || []), userMsg] }));
       await saveMessageToDB(convId, userMsg);
 
-      const allMessages = [...(messagesByConv[convId] || []), { ...userMsg, content }];
+      const allMessages = [...(messagesByConv[convId] || []), userMsg];
 
-      if (isImageRequest(messageText)) {
+      if (isImageRequest(messageText) && !currentDocContext) {
         await handleImageGeneration(messageText, convId);
       } else {
-        await handleStreamChat(allMessages, convId);
+        await handleStreamChat(allMessages, convId, currentDocContext);
       }
     } catch (e: any) {
       toast.error(e.message || "Something went wrong");
@@ -306,7 +358,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
 
-  // Voice input using Web Speech API
   const toggleVoiceInput = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
@@ -321,7 +372,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     }
 
     const recognition = new SpeechRecognition();
-    recognition.lang = "hi-IN"; // Hindi + English mixed
+    recognition.lang = "hi-IN";
     recognition.interimResults = true;
     recognition.continuous = true;
     recognitionRef.current = recognition;
@@ -347,9 +398,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       if (event.error === "not-allowed") toast.error("Microphone access denied.");
     };
 
-    recognition.onend = () => {
-      setIsListening(false);
-    };
+    recognition.onend = () => setIsListening(false);
 
     recognition.start();
     setIsListening(true);
@@ -363,8 +412,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       <ChatSidebar
         conversations={conversations}
         activeId={activeConvId}
-        onSelect={(id) => { setActiveConvId(id); setSidebarOpen(false); }}
-        onNew={() => { setActiveConvId(null); setSidebarOpen(false); }}
+        onSelect={(id) => { setActiveConvId(id); setSidebarOpen(false); setDocumentContext(null); }}
+        onNew={() => { setActiveConvId(null); setSidebarOpen(false); setDocumentContext(null); }}
         onDelete={handleDeleteConversation}
         onRename={handleRenameConversation}
         isOpen={sidebarOpen}
@@ -381,6 +430,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
           <h2 className="text-sm font-orbitron font-bold bg-gradient-to-r from-neon-cyan via-neon-pink to-neon-yellow bg-clip-text text-transparent truncate">
             {activeConvId ? conversations.find((c) => c.id === activeConvId)?.title || "Chat" : "MINDSPARK AI"}
           </h2>
+          {documentContext && (
+            <span className="ml-auto text-xs px-2 py-1 rounded-full bg-neon-green/10 border border-neon-green/30 text-neon-green flex items-center gap-1">
+              <FileText className="w-3 h-3" /> Document loaded
+              <button onClick={() => setDocumentContext(null)} className="ml-1 hover:text-neon-red">✕</button>
+            </span>
+          )}
         </header>
 
         {messages.length === 0 && !activeConvId ? (
@@ -390,7 +445,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
             {messages.map((msg) => (
               <MessageBubble key={msg.id} message={msg} />
             ))}
-            {isLoading && messages[messages.length - 1]?.role === "user" && (
+            {(isLoading || isParsingDoc) && messages[messages.length - 1]?.role === "user" && (
               <div className="flex gap-3">
                 <div className="w-8 h-8 rounded-lg bg-neon-cyan/10 border border-neon-cyan/30 flex items-center justify-center">
                   <Loader2 className="w-4 h-4 text-neon-cyan animate-spin" />
@@ -414,8 +469,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
               <CheckCircle className="w-4 h-4 text-neon-green flex-shrink-0" />
               <FileText className="w-4 h-4 text-neon-yellow flex-shrink-0" />
               <span className="text-foreground truncate">{uploadedFile.name}</span>
-              <span className="text-muted-foreground text-xs">— Type what you want to do with it</span>
-              <button onClick={() => setUploadedFile(null)} className="ml-auto text-muted-foreground hover:text-neon-red text-xs">✕</button>
+              {isParsingDoc ? (
+                <span className="text-muted-foreground text-xs flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Analyzing...</span>
+              ) : (
+                <span className="text-muted-foreground text-xs">— Ready! Ask anything about it</span>
+              )}
+              <button onClick={() => { setUploadedFile(null); setDocumentContext(null); }} className="ml-auto text-muted-foreground hover:text-neon-red text-xs">✕</button>
             </div>
           </div>
         )}
@@ -424,7 +483,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
           <div className="max-w-3xl mx-auto flex items-end gap-2">
             <button
               onClick={() => fileInputRef.current?.click()}
-              disabled={isLoading}
+              disabled={isLoading || isParsingDoc}
               className="flex-shrink-0 w-11 h-11 rounded-xl border border-neon-yellow/30 bg-card/50 flex items-center justify-center hover:bg-neon-yellow/10 hover:border-neon-yellow/50 transition-all disabled:opacity-40"
               title="Upload file or image"
             >
@@ -433,53 +492,42 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
             <input
               ref={fileInputRef}
               type="file"
+              accept=".pdf,.doc,.docx,.txt,.csv,.xlsx,.pptx,.png,.jpg,.jpeg,.gif,.webp"
+              onChange={(e) => { if (e.target.files?.[0]) handleFileUpload(e.target.files[0]); e.target.value = ""; }}
               className="hidden"
-              accept="image/*,.pdf,.doc,.docx,.txt,.csv,.json,.md"
-              onChange={(e) => { const file = e.target.files?.[0]; if (file) handleFileUpload(file); e.target.value = ""; }}
             />
-            <button
-              onClick={() => setInput("Generate an image of ")}
-              disabled={isLoading}
-              className="flex-shrink-0 w-11 h-11 rounded-xl border border-neon-pink/30 bg-card/50 flex items-center justify-center hover:bg-neon-pink/10 hover:border-neon-pink/50 transition-all disabled:opacity-40"
-              title="Generate image"
-            >
-              <ImageIcon className="w-4 h-4 text-neon-pink" />
-            </button>
-            <button
-              onClick={toggleVoiceInput}
-              disabled={isLoading}
-              className={`flex-shrink-0 w-11 h-11 rounded-xl border bg-card/50 flex items-center justify-center transition-all disabled:opacity-40 ${
-                isListening
-                  ? "border-neon-red/60 bg-neon-red/20 glow-pink animate-pulse"
-                  : "border-neon-green/30 hover:bg-neon-green/10 hover:border-neon-green/50"
-              }`}
-              title={isListening ? "Stop listening" : "Voice input"}
-            >
-              {isListening ? <MicOff className="w-4 h-4 text-neon-red" /> : <Mic className="w-4 h-4 text-neon-green" />}
-            </button>
-            <div className="flex-1 relative rounded-xl bg-card/50 border border-neon-cyan/20 hover:border-neon-cyan/40 transition-colors" style={{ boxShadow: "inset 0 0 20px hsl(180 100% 50% / 0.03), 0 0 12px hsl(180 100% 50% / 0.08)" }}>
+            <div className="flex-1 relative">
               <textarea
                 ref={textareaRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={uploadedFile ? `Ask about "${uploadedFile.name}"...` : "Ask anything... (code, math, images, ideas)"}
-                className="w-full resize-none bg-transparent px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none min-h-[44px] max-h-[150px]"
+                placeholder={documentContext ? "Ask anything about the uploaded document..." : "Ask MINDSPARK AI anything..."}
+                className="w-full bg-card/50 border border-neon-cyan/20 rounded-xl px-4 py-3 text-foreground resize-none focus:outline-none focus:border-neon-cyan/50 focus:shadow-[0_0_12px_hsl(var(--neon-cyan)/0.15)] transition-all placeholder:text-muted-foreground/60"
                 rows={1}
-                disabled={isLoading}
+                disabled={isLoading || isParsingDoc}
               />
             </div>
             <button
+              onClick={toggleVoiceInput}
+              disabled={isLoading || isParsingDoc}
+              className={`flex-shrink-0 w-11 h-11 rounded-xl border flex items-center justify-center transition-all disabled:opacity-40 ${
+                isListening
+                  ? "border-neon-red/50 bg-neon-red/10 text-neon-red shadow-[0_0_12px_hsl(var(--neon-red)/0.3)]"
+                  : "border-neon-purple/30 bg-card/50 text-neon-purple hover:bg-neon-purple/10 hover:border-neon-purple/50"
+              }`}
+              title={isListening ? "Stop listening" : "Voice input"}
+            >
+              {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+            </button>
+            <button
               onClick={() => handleSend()}
-              disabled={!input.trim() || isLoading}
-              className="flex-shrink-0 w-11 h-11 rounded-xl bg-primary text-primary-foreground flex items-center justify-center hover:opacity-90 transition-opacity disabled:opacity-40 glow-cyan"
+              disabled={isLoading || isParsingDoc || !input.trim()}
+              className="flex-shrink-0 w-11 h-11 rounded-xl bg-gradient-to-r from-neon-cyan to-neon-purple text-white flex items-center justify-center hover:shadow-[0_0_15px_hsl(var(--neon-cyan)/0.3)] transition-all disabled:opacity-40"
             >
               {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
             </button>
           </div>
-          <p className="text-center text-[10px] text-muted-foreground mt-2">
-            MINDSPARK AI can make mistakes. Verify important information.
-          </p>
         </div>
       </div>
     </div>
