@@ -13,8 +13,9 @@ serve(async (req) => {
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
 
-    // Enhanced prompt for better image generation
-    const enhancedPrompt = `Create a high-quality, detailed image: ${prompt}. Make it visually stunning, professional quality, high resolution.`;
+    const enhancedPrompt = `Generate a highly detailed, photorealistic, professional quality image: ${prompt}. 
+Style: Ultra high resolution, cinematic lighting, sharp details, vivid colors, professional photography quality.
+Make it look as realistic and authentic as possible.`;
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
@@ -23,7 +24,7 @@ serve(async (req) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash-image",
+        model: "google/gemini-3-pro-image-preview",
         messages: [
           { role: "user", content: enhancedPrompt },
         ],
