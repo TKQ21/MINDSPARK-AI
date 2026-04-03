@@ -414,8 +414,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       }
     } catch (e: any) {
       toast.error(e.message || "Something went wrong");
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
