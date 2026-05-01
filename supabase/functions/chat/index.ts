@@ -42,40 +42,55 @@ function expandQuery(question: string): string[] {
   return [...variants].filter((v) => v.trim().length > 0);
 }
 
-// FIX 1 — Smart small chunks (200 chars) with forced boundaries on data lines
-function splitDocumentIntoChunks(text: string, chunkSize = 200): string[] {
+// Structure-aware chunking: keeps tables intact, groups sections by headings,
+// preserves paragraph context. Larger chunks (≈900 chars) with overlap so
+// related sentences stay together for semantic matching.
+function splitDocumentIntoChunks(text: string, chunkSize = 900, overlap = 150): string[] {
   const cleaned = text.replace(/\r/g, "").replace(/\n{3,}/g, "\n\n").trim();
   if (!cleaned) return [];
 
-  const lines = cleaned.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  // Split on blank lines to keep paragraphs / table blocks together
+  const blocks = cleaned.split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean);
+
+  const isTableBlock = (b: string) =>
+    /\|/.test(b) && b.split("\n").filter((l) => /\|/.test(l)).length >= 2;
+  const isHeading = (b: string) => /^(#{1,6}\s|[A-Z][A-Z0-9 \-]{4,}$)/m.test(b);
+
   const chunks: string[] = [];
   let buffer = "";
-
-  const isDataLine = (line: string): boolean =>
-    /:/.test(line) ||
-    /\d+\s*[-–]\s*\d+/.test(line) || // ranges like 41-50
-    /\d+\s*%/.test(line) ||           // percentages
-    /\|/.test(line);                  // table rows
+  let currentHeading = "";
 
   const flush = () => {
     const t = buffer.trim();
     if (t) chunks.push(t);
-    buffer = "";
+    if (overlap > 0 && t.length > overlap) {
+      buffer = t.slice(-overlap) + "\n";
+    } else {
+      buffer = "";
+    }
   };
 
-  for (const line of lines) {
-    // Force a new chunk whenever we hit a data line and buffer has content
-    if (isDataLine(line) && buffer.trim().length > 40) {
-      flush();
-      buffer = line + " ";
+  for (const block of blocks) {
+    // Tables and headings: keep whole and never split
+    if (isTableBlock(block)) {
+      if (buffer.trim()) flush();
+      const tableWithCtx = currentHeading ? `${currentHeading}\n\n${block}` : block;
+      chunks.push(tableWithCtx);
+      buffer = "";
       continue;
     }
-    if ((buffer.length + line.length) > chunkSize && buffer.trim()) {
+    if (isHeading(block) && block.length < 200) {
+      if (buffer.trim()) flush();
+      currentHeading = block;
+      buffer = block + "\n\n";
+      continue;
+    }
+    if ((buffer.length + block.length + 2) > chunkSize && buffer.trim()) {
       flush();
     }
-    buffer += line + " ";
+    buffer += block + "\n\n";
   }
-  flush();
+  if (buffer.trim()) chunks.push(buffer.trim());
 
   return chunks;
 }
