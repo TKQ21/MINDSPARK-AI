@@ -20,40 +20,62 @@ function normalizeText(value: string): string {
     .trim();
 }
 
-function splitDocumentIntoChunks(text: string, chunkSize = 1800, overlap = 250): string[] {
-  const cleaned = text.replace(/\r/g, "").trim();
+// FIX 3 — Normalize query: expand numeric ranges, drop Hindi/English fillers
+function normalizeQuery(q: string): string {
+  return q
+    .replace(/(\d+)\s*[-–]\s*(\d+)/g, "$1 to $2 age group range")
+    .replace(/\b(ka|ki|ke|ko|se|mai|mein|me|aur|ya|toh|hai|hain|tha|thi|the)\b/gi, " ")
+    .replace(/\b(kitni|kitna|kitne|kya|kyun|kaise|kaun|kab|kahan)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// FIX 4 — Expand query into multiple search variants
+function expandQuery(question: string): string[] {
+  const normalized = normalizeQuery(question);
+  const variants = new Set<string>([
+    question,
+    normalized,
+    `${normalized} exact value number percentage rate`,
+    question.replace(/(\d+)\s*[-–]\s*(\d+)/g, (m) => `${m} age group data point`),
+  ]);
+  return [...variants].filter((v) => v.trim().length > 0);
+}
+
+// FIX 1 — Smart small chunks (200 chars) with forced boundaries on data lines
+function splitDocumentIntoChunks(text: string, chunkSize = 200): string[] {
+  const cleaned = text.replace(/\r/g, "").replace(/\n{3,}/g, "\n\n").trim();
   if (!cleaned) return [];
 
-  const blocks = cleaned.split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
-  const source = blocks.length ? blocks : [cleaned];
+  const lines = cleaned.split(/\n/).map((l) => l.trim()).filter(Boolean);
   const chunks: string[] = [];
-  let current = "";
+  let buffer = "";
 
-  for (const block of source) {
-    if (!current) {
-      current = block;
+  const isDataLine = (line: string): boolean =>
+    /:/.test(line) ||
+    /\d+\s*[-–]\s*\d+/.test(line) || // ranges like 41-50
+    /\d+\s*%/.test(line) ||           // percentages
+    /\|/.test(line);                  // table rows
+
+  const flush = () => {
+    const t = buffer.trim();
+    if (t) chunks.push(t);
+    buffer = "";
+  };
+
+  for (const line of lines) {
+    // Force a new chunk whenever we hit a data line and buffer has content
+    if (isDataLine(line) && buffer.trim().length > 40) {
+      flush();
+      buffer = line + " ";
       continue;
     }
-
-    const candidate = `${current}\n\n${block}`;
-    if (candidate.length <= chunkSize) {
-      current = candidate;
-      continue;
+    if ((buffer.length + line.length) > chunkSize && buffer.trim()) {
+      flush();
     }
-
-    chunks.push(current.trim());
-    const overlapText = current.slice(Math.max(0, current.length - overlap)).trim();
-    current = overlapText ? `${overlapText}\n\n${block}` : block;
-
-    while (current.length > chunkSize) {
-      chunks.push(current.slice(0, chunkSize).trim());
-      current = current.slice(Math.max(1, chunkSize - overlap)).trim();
-    }
+    buffer += line + " ";
   }
-
-  if (current.trim()) {
-    chunks.push(current.trim());
-  }
+  flush();
 
   return chunks;
 }
@@ -77,9 +99,17 @@ function scoreChunk(chunk: string, query: string, queryTerms: string[]): number 
     score += occurrences * 5;
   }
 
+  // Boost EXACT numeric matches strongly (ranges, percentages, integers)
   const queryNumbers = query.match(/\d+(?:[.,]\d+)?/g) || [];
   for (const number of queryNumbers) {
-    if (chunk.includes(number)) score += 8;
+    if (chunk.includes(number)) score += 12;
+  }
+
+  // Boost exact range match like "41-50" appearing in chunk
+  const queryRanges = query.match(/\d+\s*[-–]\s*\d+/g) || [];
+  for (const range of queryRanges) {
+    const r = range.replace(/\s+/g, "");
+    if (chunk.replace(/\s+/g, "").includes(r)) score += 25;
   }
 
   if (/table|chart|figure|page|section|dashboard|metric|list|summary|note/i.test(query) && /table|chart|figure|page|section|dashboard|metric|list/i.test(chunk)) {
@@ -89,30 +119,41 @@ function scoreChunk(chunk: string, query: string, queryTerms: string[]): number 
   return score;
 }
 
+// FIX 4 + FIX 5 — Multi-variant retrieval, top_k=15
 function pickRelevantChunks(documentContext: string, query: string) {
   const chunks = splitDocumentIntoChunks(documentContext);
   if (!chunks.length) return [] as Array<{ chunk: string; index: number; score: number }>;
 
   const genericDocumentRequest = /summary|summarize|notes|overview|explain|gist|main points|key points/i.test(query);
-  const queryTerms = getQueryTerms(query);
+  const variants = expandQuery(query);
 
-  const ranked = chunks
-    .map((chunk, index) => ({ chunk, index, score: scoreChunk(chunk, query, queryTerms) }))
-    .sort((a, b) => b.score - a.score);
+  // Score each chunk as MAX score across all query variants
+  const scored = chunks.map((chunk, index) => {
+    let best = 0;
+    for (const v of variants) {
+      const terms = getQueryTerms(v);
+      const s = scoreChunk(chunk, v, terms);
+      if (s > best) best = s;
+    }
+    return { chunk, index, score: best };
+  });
 
+  const ranked = [...scored].sort((a, b) => b.score - a.score);
+
+  const TOP_K = 15;
   const selected: Array<{ chunk: string; index: number; score: number }> = [];
   let totalChars = 0;
 
   for (const item of ranked) {
     if (!genericDocumentRequest && item.score <= 0) continue;
-    if (totalChars + item.chunk.length > 12000 && selected.length > 0) continue;
+    if (totalChars + item.chunk.length > 14000 && selected.length > 0) continue;
     selected.push(item);
     totalChars += item.chunk.length;
-    if (selected.length >= 8) break;
+    if (selected.length >= TOP_K) break;
   }
 
   if (!selected.length && genericDocumentRequest) {
-    return chunks.slice(0, 5).map((chunk, index) => ({ chunk, index, score: 1 }));
+    return chunks.slice(0, 8).map((chunk, index) => ({ chunk, index, score: 1 }));
   }
 
   return selected.sort((a, b) => a.index - b.index);
@@ -120,7 +161,7 @@ function pickRelevantChunks(documentContext: string, query: string) {
 
 function buildRetrievedContext(chunks: Array<{ chunk: string; index: number; score: number }>): string {
   return chunks
-    .map(({ chunk, index }) => `### Excerpt ${index + 1}\n${chunk}`)
+    .map(({ chunk, index, score }) => `### Chunk #${index + 1} (relevance: ${score})\n${chunk}`)
     .join("\n\n---\n\n");
 }
 
