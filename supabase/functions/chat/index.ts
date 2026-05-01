@@ -42,40 +42,55 @@ function expandQuery(question: string): string[] {
   return [...variants].filter((v) => v.trim().length > 0);
 }
 
-// FIX 1 — Smart small chunks (200 chars) with forced boundaries on data lines
-function splitDocumentIntoChunks(text: string, chunkSize = 200): string[] {
+// Structure-aware chunking: keeps tables intact, groups sections by headings,
+// preserves paragraph context. Larger chunks (≈900 chars) with overlap so
+// related sentences stay together for semantic matching.
+function splitDocumentIntoChunks(text: string, chunkSize = 900, overlap = 150): string[] {
   const cleaned = text.replace(/\r/g, "").replace(/\n{3,}/g, "\n\n").trim();
   if (!cleaned) return [];
 
-  const lines = cleaned.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  // Split on blank lines to keep paragraphs / table blocks together
+  const blocks = cleaned.split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean);
+
+  const isTableBlock = (b: string) =>
+    /\|/.test(b) && b.split("\n").filter((l) => /\|/.test(l)).length >= 2;
+  const isHeading = (b: string) => /^(#{1,6}\s|[A-Z][A-Z0-9 \-]{4,}$)/m.test(b);
+
   const chunks: string[] = [];
   let buffer = "";
-
-  const isDataLine = (line: string): boolean =>
-    /:/.test(line) ||
-    /\d+\s*[-–]\s*\d+/.test(line) || // ranges like 41-50
-    /\d+\s*%/.test(line) ||           // percentages
-    /\|/.test(line);                  // table rows
+  let currentHeading = "";
 
   const flush = () => {
     const t = buffer.trim();
     if (t) chunks.push(t);
-    buffer = "";
+    if (overlap > 0 && t.length > overlap) {
+      buffer = t.slice(-overlap) + "\n";
+    } else {
+      buffer = "";
+    }
   };
 
-  for (const line of lines) {
-    // Force a new chunk whenever we hit a data line and buffer has content
-    if (isDataLine(line) && buffer.trim().length > 40) {
-      flush();
-      buffer = line + " ";
+  for (const block of blocks) {
+    // Tables and headings: keep whole and never split
+    if (isTableBlock(block)) {
+      if (buffer.trim()) flush();
+      const tableWithCtx = currentHeading ? `${currentHeading}\n\n${block}` : block;
+      chunks.push(tableWithCtx);
+      buffer = "";
       continue;
     }
-    if ((buffer.length + line.length) > chunkSize && buffer.trim()) {
+    if (isHeading(block) && block.length < 200) {
+      if (buffer.trim()) flush();
+      currentHeading = block;
+      buffer = block + "\n\n";
+      continue;
+    }
+    if ((buffer.length + block.length + 2) > chunkSize && buffer.trim()) {
       flush();
     }
-    buffer += line + " ";
+    buffer += block + "\n\n";
   }
-  flush();
+  if (buffer.trim()) chunks.push(buffer.trim());
 
   return chunks;
 }
@@ -99,60 +114,106 @@ function scoreChunk(chunk: string, query: string, queryTerms: string[]): number 
     score += occurrences * 5;
   }
 
-  // Boost EXACT numeric matches strongly (ranges, percentages, integers)
+  // Boost EXACT numeric matches strongly
   const queryNumbers = query.match(/\d+(?:[.,]\d+)?/g) || [];
   for (const number of queryNumbers) {
     if (chunk.includes(number)) score += 12;
   }
-
-  // Boost exact range match like "41-50" appearing in chunk
   const queryRanges = query.match(/\d+\s*[-–]\s*\d+/g) || [];
   for (const range of queryRanges) {
     const r = range.replace(/\s+/g, "");
     if (chunk.replace(/\s+/g, "").includes(r)) score += 25;
   }
 
-  if (/table|chart|figure|page|section|dashboard|metric|list|summary|note/i.test(query) && /table|chart|figure|page|section|dashboard|metric|list/i.test(chunk)) {
+  if (/table|chart|figure|page|section|dashboard|metric|list|summary|note|subject|paper|topic|chapter|syllabus|marks|grade/i.test(query) &&
+      /\||table|chart|figure|page|section|dashboard|metric|list|subject|paper|topic|chapter|marks/i.test(chunk)) {
+    score += 8;
+  }
+
+  // If chunk is a table and query terms appear in it, boost
+  if (/\|/.test(chunk) && queryTerms.some((t) => normalizedChunk.includes(t))) {
     score += 6;
   }
 
   return score;
 }
 
-// FIX 4 + FIX 5 — Multi-variant retrieval, top_k=15
-function pickRelevantChunks(documentContext: string, query: string) {
+// Use Lovable AI to extract semantic intent + search keywords from the user's question.
+async function semanticQueryAnalysis(question: string, apiKey: string): Promise<{
+  keywords: string[]; expandedQueries: string[]; wantsTable: boolean;
+}> {
+  try {
+    const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "google/gemini-3-flash-preview",
+        messages: [
+          { role: "system", content: "You are a search-query analyzer for a document Q&A system. Respond with STRICT JSON only — no prose." },
+          { role: "user", content: `Question (Hindi/English/Hinglish): ${question}\n\nReturn JSON: {"keywords": string[] (5-12 lemmatized nouns/entities in English AND original language), "expandedQueries": string[] (3-5 reworded search phrases), "wantsTable": boolean (true if user asks about subjects/papers/topics/lists/tables/marks/syllabus/details)}` },
+        ],
+        temperature: 0,
+        response_format: { type: "json_object" },
+      }),
+    });
+    if (!resp.ok) throw new Error(`analysis ${resp.status}`);
+    const data = await resp.json();
+    const parsed = JSON.parse(data.choices?.[0]?.message?.content ?? "{}");
+    return {
+      keywords: Array.isArray(parsed.keywords) ? parsed.keywords.filter((k: any) => typeof k === "string") : [],
+      expandedQueries: Array.isArray(parsed.expandedQueries) ? parsed.expandedQueries.filter((k: any) => typeof k === "string") : [],
+      wantsTable: !!parsed.wantsTable,
+    };
+  } catch (err) {
+    console.warn("semanticQueryAnalysis fallback:", err);
+    return { keywords: [], expandedQueries: [], wantsTable: false };
+  }
+}
+
+function pickRelevantChunks(
+  documentContext: string,
+  query: string,
+  semantic: { keywords: string[]; expandedQueries: string[]; wantsTable: boolean },
+) {
   const chunks = splitDocumentIntoChunks(documentContext);
   if (!chunks.length) return [] as Array<{ chunk: string; index: number; score: number }>;
 
   const genericDocumentRequest = /summary|summarize|notes|overview|explain|gist|main points|key points/i.test(query);
-  const variants = expandQuery(query);
 
-  // Score each chunk as MAX score across all query variants
+  const variants = new Set<string>([query, normalizeQuery(query), ...expandQuery(query), ...semantic.expandedQueries]);
+  if (semantic.keywords.length) variants.add(semantic.keywords.join(" "));
+
   const scored = chunks.map((chunk, index) => {
     let best = 0;
     for (const v of variants) {
+      if (!v?.trim()) continue;
       const terms = getQueryTerms(v);
       const s = scoreChunk(chunk, v, terms);
       if (s > best) best = s;
     }
+    for (const kw of semantic.keywords) {
+      if (kw && chunk.toLowerCase().includes(kw.toLowerCase())) best += 4;
+    }
+    if (semantic.wantsTable && /\|/.test(chunk)) best += 10;
     return { chunk, index, score: best };
   });
 
   const ranked = [...scored].sort((a, b) => b.score - a.score);
 
-  const TOP_K = 15;
+  const TOP_K = 18;
+  const MAX_CHARS = 18000;
   const selected: Array<{ chunk: string; index: number; score: number }> = [];
   let totalChars = 0;
 
   for (const item of ranked) {
-    if (!genericDocumentRequest && item.score <= 0) continue;
-    if (totalChars + item.chunk.length > 14000 && selected.length > 0) continue;
+    if (!genericDocumentRequest && !semantic.wantsTable && item.score <= 0) continue;
+    if (totalChars + item.chunk.length > MAX_CHARS && selected.length > 0) continue;
     selected.push(item);
     totalChars += item.chunk.length;
     if (selected.length >= TOP_K) break;
   }
 
-  if (!selected.length && genericDocumentRequest) {
+  if (!selected.length && (genericDocumentRequest || semantic.wantsTable)) {
     return chunks.slice(0, 8).map((chunk, index) => ({ chunk, index, score: 1 }));
   }
 
@@ -303,7 +364,10 @@ serve(async (req) => {
 
     if (hasDocContext) {
       const latestQuestion = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
-      const relevantChunks = pickRelevantChunks(documentContext, latestQuestion);
+
+      // Semantic understanding of the user's intent BEFORE retrieval
+      const semantic = await semanticQueryAnalysis(latestQuestion, LOVABLE_API_KEY);
+      const relevantChunks = pickRelevantChunks(documentContext, latestQuestion, semantic);
 
       if (!relevantChunks.length) {
         return streamSingleMessage("**This specific information is not in the document.**");
@@ -311,7 +375,7 @@ serve(async (req) => {
 
       apiMessages.push({
         role: "system",
-        content: `[Context — Document Excerpts from the uploaded file]\n\n${buildRetrievedContext(relevantChunks)}\n\n[Instructions]\nAnswer the user's question using ONLY the chunks above. Quote exact numbers verbatim. If the user asked about a specific range/value that does not appear in these chunks, reply exactly: **This specific information is not in the document.** Always end with the mandatory citation block listing the chunk numbers you used.`,
+        content: `[Context — Document Excerpts from the uploaded file]\n\n${buildRetrievedContext(relevantChunks)}\n\n[Instructions]\nAnswer the user's question using ONLY the chunks above. Tables (lines with \`|\`) are real data — read every row carefully and quote values verbatim. If the user asks about subjects, papers, topics, marks, syllabus, or any list item, scan the tables and structured sections in the chunks BEFORE saying the info is missing. If after careful reading the exact information truly does not appear, reply exactly: **This specific information is not in the document.** Always end with the mandatory citation block listing the chunk numbers you used.`,
       });
     }
 
