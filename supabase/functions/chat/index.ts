@@ -364,7 +364,10 @@ serve(async (req) => {
 
     if (hasDocContext) {
       const latestQuestion = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
-      const relevantChunks = pickRelevantChunks(documentContext, latestQuestion);
+
+      // Semantic understanding of the user's intent BEFORE retrieval
+      const semantic = await semanticQueryAnalysis(latestQuestion, LOVABLE_API_KEY);
+      const relevantChunks = pickRelevantChunks(documentContext, latestQuestion, semantic);
 
       if (!relevantChunks.length) {
         return streamSingleMessage("**This specific information is not in the document.**");
@@ -372,7 +375,7 @@ serve(async (req) => {
 
       apiMessages.push({
         role: "system",
-        content: `[Context — Document Excerpts from the uploaded file]\n\n${buildRetrievedContext(relevantChunks)}\n\n[Instructions]\nAnswer the user's question using ONLY the chunks above. Quote exact numbers verbatim. If the user asked about a specific range/value that does not appear in these chunks, reply exactly: **This specific information is not in the document.** Always end with the mandatory citation block listing the chunk numbers you used.`,
+        content: `[Context — Document Excerpts from the uploaded file]\n\n${buildRetrievedContext(relevantChunks)}\n\n[Instructions]\nAnswer the user's question using ONLY the chunks above. Tables (lines with \`|\`) are real data — read every row carefully and quote values verbatim. If the user asks about subjects, papers, topics, marks, syllabus, or any list item, scan the tables and structured sections in the chunks BEFORE saying the info is missing. If after careful reading the exact information truly does not appear, reply exactly: **This specific information is not in the document.** Always end with the mandatory citation block listing the chunk numbers you used.`,
       });
     }
 
