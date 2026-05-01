@@ -306,12 +306,12 @@ serve(async (req) => {
       const relevantChunks = pickRelevantChunks(documentContext, latestQuestion);
 
       if (!relevantChunks.length) {
-        return streamSingleMessage("**Answer not in this document.**");
+        return streamSingleMessage("**This specific information is not in the document.**");
       }
 
       apiMessages.push({
         role: "system",
-        content: `📄 RETRIEVED EXCERPTS FROM THE LATEST UPLOADED DOCUMENT:\n\n${buildRetrievedContext(relevantChunks)}\n\nUse only these excerpts to answer the user's question. If the answer is not fully supported here, reply exactly with **Answer not in this document.**`,
+        content: `[Context — Document Excerpts from the uploaded file]\n\n${buildRetrievedContext(relevantChunks)}\n\n[Instructions]\nAnswer the user's question using ONLY the chunks above. Quote exact numbers verbatim. If the user asked about a specific range/value that does not appear in these chunks, reply exactly: **This specific information is not in the document.** Always end with the mandatory citation block listing the chunk numbers you used.`,
       });
     }
 
@@ -326,7 +326,7 @@ serve(async (req) => {
       body: JSON.stringify({
         model: "google/gemini-3-flash-preview",
         messages: apiMessages,
-        temperature: hasDocContext ? 0.1 : 0.7,
+        temperature: hasDocContext ? 0 : 0.7,
         stream: true,
       }),
     });
