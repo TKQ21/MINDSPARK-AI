@@ -26,13 +26,24 @@ serve(async (req) => {
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
 
-    // Fetch the file
+    // Fetch the file (supports large files up to ~100MB)
     const fileResponse = await fetch(fileUrl);
     if (!fileResponse.ok) throw new Error("Failed to fetch file");
 
     const contentType = fileResponse.headers.get("content-type") || "";
     const fileBuffer = await fileResponse.arrayBuffer();
-    const base64Data = encodeBase64(new Uint8Array(fileBuffer));
+    const fileBytes = new Uint8Array(fileBuffer);
+    const fileSizeMB = fileBytes.byteLength / (1024 * 1024);
+    console.log(`parse-document: ${fileName} size=${fileSizeMB.toFixed(2)}MB type=${contentType}`);
+
+    if (fileSizeMB > 100) {
+      return new Response(JSON.stringify({ error: "File too large (max 100MB).", success: false }), {
+        status: 413, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Encode in chunks to avoid stack-overflow on large files
+    const base64Data = encodeBase64(fileBytes);
 
     const ext = (fileName || "").toLowerCase();
     const isImage = contentType.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(ext);
