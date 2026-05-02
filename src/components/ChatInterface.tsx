@@ -1,9 +1,21 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Image as ImageIcon, Loader2, Menu, Paperclip, FileText, CheckCircle, Mic, MicOff } from "lucide-react";
+import {
+  Send,
+  Loader2,
+  Paperclip,
+  FileText,
+  CheckCircle,
+  Mic,
+  MicOff,
+  ChevronDown,
+  Sparkles,
+  PanelRight,
+} from "lucide-react";
+import { motion } from "framer-motion";
 import MessageBubble, { Message } from "./MessageBubble";
 import ChatSidebar, { Conversation } from "./ChatSidebar";
 import WelcomeScreen from "./WelcomeScreen";
-import StarBackground from "./StarBackground";
+import InsightsPanel from "./InsightsPanel";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
@@ -12,6 +24,15 @@ const CHAT_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`;
 const IMAGE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-image`;
 const PARSE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/parse-document`;
 const unreadableFileMessage = "File received, but content could not be read. Please try re-uploading.";
+
+const MAX_FILE_MB = 100;
+
+const QUICK_PROMPTS = [
+  "Summarize this for me",
+  "Explain like I'm 5",
+  "Write a Python script",
+  "Create an image of…",
+];
 
 interface ChatInterfaceProps {
   userName?: string;
@@ -23,7 +44,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   const [messagesByConv, setMessagesByConv] = useState<Record<string, Message[]>>({});
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [insightsOpen, setInsightsOpen] = useState(true);
   const [uploadedFile, setUploadedFile] = useState<{ name: string; url: string; isImage: boolean } | null>(null);
   const [documentContext, setDocumentContext] = useState<string | null>(null);
   const [documentContexts, setDocumentContexts] = useState<Record<string, string>>({});
@@ -51,7 +73,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     } else {
       setPendingDocumentContext(nextContext);
     }
-
     setDocumentContext(nextContext);
   }, []);
 
@@ -109,7 +130,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       setDocumentContext(documentContexts[activeConvId] ?? null);
       return;
     }
-
     setDocumentContext(pendingDocumentContext);
   }, [activeConvId, documentContexts, pendingDocumentContext]);
 
@@ -120,7 +140,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
-      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 150) + "px";
+      textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 180) + "px";
     }
   }, [input]);
 
@@ -162,11 +182,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     await supabase.from("conversations").delete().eq("id", id);
     setConversations((prev) => prev.filter((c) => c.id !== id));
     setMessagesByConv((prev) => { const next = { ...prev }; delete next[id]; return next; });
-    setDocumentContexts((prev) => {
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
+    setDocumentContexts((prev) => { const next = { ...prev }; delete next[id]; return next; });
     if (activeConvId === id) {
       setActiveConvId(null);
       setUploadedFile(null);
@@ -201,50 +217,37 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         body: JSON.stringify({ fileUrl, fileName }),
       });
       const data = await resp.json().catch(() => ({}));
-
-      if (!resp.ok) {
-        throw new Error(typeof data.error === "string" ? data.error : unreadableFileMessage);
-      }
-
+      if (!resp.ok) throw new Error(typeof data.error === "string" ? data.error : unreadableFileMessage);
       if (data.success && typeof data.text === "string" && data.text.trim()) {
         return { text: data.text, error: null };
       }
-
       throw new Error(unreadableFileMessage);
     } catch (e: any) {
-      return {
-        text: null,
-        error: e?.message || unreadableFileMessage,
-      };
+      return { text: null, error: e?.message || unreadableFileMessage };
     } finally {
       setIsParsingDoc(false);
     }
   };
 
   const handleFileUpload = async (file: File) => {
-    if (file.size > 20 * 1024 * 1024) {
-      toast.error("File too large. Max 20MB.");
+    if (file.size > MAX_FILE_MB * 1024 * 1024) {
+      toast.error(`File too large. Max ${MAX_FILE_MB}MB.`);
       return;
     }
-
     setDocumentReadError(null);
-
     const filePath = `${Date.now()}_${file.name}`;
     const { error: uploadError } = await supabase.storage.from("chat-uploads").upload(filePath, file);
     if (uploadError) { toast.error("Upload failed: " + uploadError.message); return; }
     const { data: publicUrl } = supabase.storage.from("chat-uploads").getPublicUrl(filePath);
     const isImage = file.type.startsWith("image/");
-
     setUploadedFile({ name: file.name, url: publicUrl.publicUrl, isImage });
 
     const { text: extractedText, error: parseError } = await parseDocument(publicUrl.publicUrl, file.name);
-
     if (extractedText) {
       setLatestDocumentContext(activeConvId, extractedText);
-      toast.success("📄 File uploaded successfully. What should I do with it?");
+      toast.success("📄 File ready. Ask me anything about it.");
       return;
     }
-
     clearLatestDocumentContext(activeConvId);
     setDocumentReadError(parseError || unreadableFileMessage);
     toast.error(parseError || unreadableFileMessage);
@@ -265,7 +268,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       const botMsg: Message = {
         id: crypto.randomUUID(),
         role: "assistant",
-        content: data.text || "Here's your generated image! 🎨",
+        content: data.text || "Here's your generated image.",
         imageUrl: data.image_url,
       };
       setMessagesByConv((prev) => ({ ...prev, [convId]: [...(prev[convId] || []), botMsg] }));
@@ -281,9 +284,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     try {
       const apiMessages = allMessages.map((m) => ({ role: m.role, content: m.content }));
       const body: any = { messages: apiMessages };
-      if (docCtx) {
-        body.documentContext = docCtx;
-      }
+      if (docCtx) body.documentContext = docCtx;
 
       const resp = await fetch(CHAT_URL, {
         method: "POST",
@@ -356,15 +357,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     if (!messageText || isLoading) return;
     setInput("");
     setIsLoading(true);
-
     try {
       let convId = activeConvId;
-      if (!convId) {
-        convId = await createConversation(messageText.slice(0, 40));
-      }
+      if (!convId) convId = await createConversation(messageText.slice(0, 40));
 
       const wantsGeneratedImage = isImageRequest(messageText);
-      let content = messageText;
       let fileName: string | undefined;
       let imageUrl: string | undefined;
       let currentDocContext = documentContexts[convId] ?? null;
@@ -374,16 +371,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         setDocumentContexts((prev) => ({ ...prev, [convId!]: pendingDocumentContext }));
         setPendingDocumentContext(null);
       }
-
-      if (currentDocContext) {
-        setDocumentContext(currentDocContext);
-      }
+      if (currentDocContext) setDocumentContext(currentDocContext);
 
       if (uploadedFile) {
         fileName = uploadedFile.name;
-        if (uploadedFile.isImage) {
-          imageUrl = uploadedFile.url;
-        }
+        if (uploadedFile.isImage) imageUrl = uploadedFile.url;
       }
 
       const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: messageText, fileName, imageUrl };
@@ -393,11 +385,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       const allMessages = [...(messagesByConv[convId] || []), userMsg];
 
       if (!currentDocContext && documentReadError && uploadedFile && !wantsGeneratedImage) {
-        const botMsg: Message = {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: documentReadError,
-        };
+        const botMsg: Message = { id: crypto.randomUUID(), role: "assistant", content: documentReadError };
         setMessagesByConv((prev) => ({ ...prev, [convId!]: [...(prev[convId!] || []), botMsg] }));
         await saveMessageToDB(convId, botMsg);
         setUploadedFile(null);
@@ -425,67 +413,69 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
 
   const toggleVoiceInput = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      toast.error("Your browser doesn't support voice input.");
-      return;
-    }
-
-    if (isListening) {
-      recognitionRef.current?.stop();
-      setIsListening(false);
-      return;
-    }
+    if (!SpeechRecognition) { toast.error("Your browser doesn't support voice input."); return; }
+    if (isListening) { recognitionRef.current?.stop(); setIsListening(false); return; }
 
     const recognition = new SpeechRecognition();
     recognition.lang = "hi-IN";
     recognition.interimResults = true;
     recognition.continuous = true;
     recognitionRef.current = recognition;
-
     let finalTranscript = input;
 
     recognition.onresult = (event: any) => {
       let interim = "";
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript + " ";
-        } else {
-          interim = transcript;
-        }
+        if (event.results[i].isFinal) finalTranscript += transcript + " ";
+        else interim = transcript;
       }
       setInput(finalTranscript + interim);
     };
-
     recognition.onerror = (event: any) => {
-      console.error("Speech error:", event.error);
       setIsListening(false);
       if (event.error === "not-allowed") toast.error("Microphone access denied.");
     };
-
     recognition.onend = () => setIsListening(false);
-
     recognition.start();
     setIsListening(true);
-    toast.success("🎤 Listening... Speak now!");
+    toast.success("🎤 Listening...");
   };
 
+  const activeTitle = activeConvId
+    ? conversations.find((c) => c.id === activeConvId)?.title || "Chat"
+    : "New conversation";
+
   return (
-    <div className="flex h-screen w-full relative overflow-hidden">
-      <StarBackground />
+    <div className="flex h-screen w-full relative overflow-hidden bg-[hsl(230_30%_5%)] text-slate-100">
+      {/* Aurora background */}
+      <div
+        className="pointer-events-none absolute inset-0 z-0"
+        style={{
+          background:
+            "radial-gradient(ellipse 80% 60% at 15% 5%, hsl(230 90% 35% / 0.35), transparent 60%), radial-gradient(ellipse 70% 60% at 90% 90%, hsl(270 85% 40% / 0.28), transparent 60%), radial-gradient(ellipse 60% 50% at 50% 100%, hsl(217 91% 50% / 0.18), transparent 70%)",
+        }}
+      />
+      <div
+        className="pointer-events-none absolute inset-0 z-0 opacity-[0.08]"
+        style={{
+          backgroundImage:
+            "linear-gradient(hsl(217 91% 80% / 0.6) 1px, transparent 1px), linear-gradient(90deg, hsl(217 91% 80% / 0.6) 1px, transparent 1px)",
+          backgroundSize: "44px 44px",
+          maskImage: "radial-gradient(ellipse 60% 50% at 50% 30%, black, transparent 80%)",
+        }}
+      />
 
       <ChatSidebar
         conversations={conversations}
         activeId={activeConvId}
         onSelect={(id) => {
           setActiveConvId(id);
-          setSidebarOpen(false);
           setUploadedFile(null);
           setDocumentReadError(null);
         }}
         onNew={() => {
           setActiveConvId(null);
-          setSidebarOpen(false);
           setUploadedFile(null);
           setDocumentReadError(null);
           clearLatestDocumentContext(null);
@@ -498,75 +488,89 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         onLogout={handleLogout}
       />
 
-      <div className="w-full flex flex-col relative z-10">
-        <header className="flex items-center gap-3 px-4 py-3 border-b border-neon-cyan/10 bg-background/60 backdrop-blur-md">
-          <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-2 rounded-lg hover:bg-muted transition-colors">
-            <Menu className="w-5 h-5 text-neon-cyan" />
+      <div className="flex-1 flex flex-col relative z-10 min-w-0">
+        {/* Header */}
+        <header className="flex items-center gap-3 px-5 py-3 border-b border-white/5 bg-white/[0.02] backdrop-blur-xl">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <Sparkles className="w-4 h-4 text-blue-300 flex-shrink-0" />
+            <h2 className="text-sm font-semibold text-white truncate">{activeTitle}</h2>
+            {documentContext && !documentReadError && (
+              <span className="ml-2 text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-400/20 text-emerald-300 flex items-center gap-1">
+                <FileText className="w-3 h-3" /> Doc attached
+                <button
+                  onClick={() => { clearLatestDocumentContext(activeConvId); setDocumentReadError(null); }}
+                  className="ml-1 hover:text-rose-300"
+                >
+                  ✕
+                </button>
+              </span>
+            )}
+          </div>
+          <button
+            onClick={() => setInsightsOpen(!insightsOpen)}
+            className={`hidden md:flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-all ${
+              insightsOpen
+                ? "bg-blue-500/10 border-blue-400/30 text-blue-200"
+                : "bg-white/[0.03] border-white/10 text-slate-400 hover:text-white hover:bg-white/[0.06]"
+            }`}
+            title="Toggle insights"
+          >
+            <PanelRight className="w-3.5 h-3.5" />
+            Insights
           </button>
-          <h2 className="text-sm font-orbitron font-bold bg-gradient-to-r from-neon-cyan via-neon-pink to-neon-yellow bg-clip-text text-transparent truncate">
-            {activeConvId ? conversations.find((c) => c.id === activeConvId)?.title || "Chat" : "MINDSPARK AI"}
-          </h2>
-          {documentContext && !documentReadError && (
-            <span className="ml-auto text-xs px-2 py-1 rounded-full bg-neon-green/10 border border-neon-green/30 text-neon-green flex items-center gap-1">
-              <FileText className="w-3 h-3" /> Recent document ready
-              <button
-                onClick={() => {
-                  clearLatestDocumentContext(activeConvId);
-                  setDocumentReadError(null);
-                }}
-                className="ml-1 hover:text-neon-red"
-              >
-                ✕
-              </button>
-            </span>
-          )}
         </header>
 
+        {/* Body */}
         {messages.length === 0 && !activeConvId ? (
           <WelcomeScreen onSuggestionClick={(text) => handleSend(text)} />
         ) : (
-          <div className="flex-1 overflow-y-auto px-4 py-6 space-y-6">
-            {messages.map((msg) => (
-              <MessageBubble key={msg.id} message={msg} />
-            ))}
-            {(isLoading || isParsingDoc) && messages[messages.length - 1]?.role === "user" && (
-              <div className="flex gap-3">
-                <div className="w-8 h-8 rounded-lg bg-neon-cyan/10 border border-neon-cyan/30 flex items-center justify-center">
-                  <Loader2 className="w-4 h-4 text-neon-cyan animate-spin" />
-                </div>
-                <div className="bg-card/80 border border-neon-purple/20 rounded-xl px-4 py-3 shadow-[0_0_8px_hsl(270_100%_60%/0.1)]">
-                  <div className="flex gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-neon-cyan" style={{ animation: "typing-dot 1.4s infinite 0s" }} />
-                    <span className="w-2 h-2 rounded-full bg-neon-pink" style={{ animation: "typing-dot 1.4s infinite 0.2s" }} />
-                    <span className="w-2 h-2 rounded-full bg-neon-yellow" style={{ animation: "typing-dot 1.4s infinite 0.4s" }} />
+          <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-6">
+            <div className="max-w-3xl mx-auto space-y-6">
+              {messages.map((msg) => (
+                <MessageBubble key={msg.id} message={msg} />
+              ))}
+              {(isLoading || isParsingDoc) && messages[messages.length - 1]?.role === "user" && (
+                <motion.div
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="flex gap-3"
+                >
+                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 via-indigo-500 to-violet-500 flex items-center justify-center shadow-[0_4px_18px_-4px_hsl(217_91%_60%/0.7)]">
+                    <Loader2 className="w-4 h-4 text-white animate-spin" />
                   </div>
-                </div>
-              </div>
-            )}
-            <div ref={messagesEndRef} />
+                  <div className="rounded-2xl px-4 py-3 bg-white/[0.04] border border-white/10 backdrop-blur-xl">
+                    <div className="flex gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-blue-400" style={{ animation: "typing-dot 1.4s infinite 0s" }} />
+                      <span className="w-2 h-2 rounded-full bg-indigo-400" style={{ animation: "typing-dot 1.4s infinite 0.2s" }} />
+                      <span className="w-2 h-2 rounded-full bg-violet-400" style={{ animation: "typing-dot 1.4s infinite 0.4s" }} />
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
           </div>
         )}
 
+        {/* File chip */}
         {uploadedFile && (
-          <div className="px-4 pb-2">
-            <div className="max-w-3xl mx-auto flex items-center gap-2 px-3 py-2 rounded-lg bg-neon-green/10 border border-neon-green/30 text-sm">
-              <CheckCircle className="w-4 h-4 text-neon-green flex-shrink-0" />
-              <FileText className="w-4 h-4 text-neon-yellow flex-shrink-0" />
-              <span className="text-foreground truncate">{uploadedFile.name}</span>
+          <div className="px-4 sm:px-6 pb-2">
+            <div className="max-w-3xl mx-auto flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-500/10 border border-emerald-400/20 text-sm">
+              <CheckCircle className="w-4 h-4 text-emerald-300 flex-shrink-0" />
+              <FileText className="w-4 h-4 text-blue-300 flex-shrink-0" />
+              <span className="text-slate-100 truncate">{uploadedFile.name}</span>
               {isParsingDoc ? (
-                <span className="text-muted-foreground text-xs flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> Analyzing...</span>
+                <span className="text-slate-400 text-xs flex items-center gap-1">
+                  <Loader2 className="w-3 h-3 animate-spin" /> Analyzing...
+                </span>
               ) : documentReadError ? (
-                <span className="text-neon-red text-xs">— {documentReadError}</span>
+                <span className="text-rose-300 text-xs">— {documentReadError}</span>
               ) : (
-                <span className="text-muted-foreground text-xs">— What should I do with it?</span>
+                <span className="text-slate-400 text-xs">— What should I do with it?</span>
               )}
               <button
-                onClick={() => {
-                  setUploadedFile(null);
-                  setDocumentReadError(null);
-                  clearLatestDocumentContext(activeConvId);
-                }}
-                className="ml-auto text-muted-foreground hover:text-neon-red text-xs"
+                onClick={() => { setUploadedFile(null); setDocumentReadError(null); clearLatestDocumentContext(activeConvId); }}
+                className="ml-auto text-slate-400 hover:text-rose-300 text-xs"
               >
                 ✕
               </button>
@@ -574,57 +578,118 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
           </div>
         )}
 
-        <div className="border-t border-neon-cyan/10 bg-background/60 backdrop-blur-md p-4">
-          <div className="max-w-3xl mx-auto flex items-end gap-2">
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isLoading || isParsingDoc}
-              className="flex-shrink-0 w-11 h-11 rounded-xl border border-neon-yellow/30 bg-card/50 flex items-center justify-center hover:bg-neon-yellow/10 hover:border-neon-yellow/50 transition-all disabled:opacity-40"
-              title="Upload file or image"
-            >
-              <Paperclip className="w-4 h-4 text-neon-yellow" />
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pdf,.doc,.docx,.txt,.csv,.xlsx,.pptx,.png,.jpg,.jpeg,.gif,.webp"
-              onChange={(e) => { if (e.target.files?.[0]) handleFileUpload(e.target.files[0]); e.target.value = ""; }}
-              className="hidden"
-            />
-            <div className="flex-1 relative">
+        {/* Input area */}
+        <div className="border-t border-white/5 bg-white/[0.02] backdrop-blur-xl p-4">
+          <div className="max-w-3xl mx-auto">
+            {/* Quick prompts */}
+            {messages.length === 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-3 justify-center">
+                {QUICK_PROMPTS.map((p) => (
+                  <button
+                    key={p}
+                    onClick={() => setInput(p)}
+                    className="text-[11px] px-2.5 py-1 rounded-full bg-white/[0.03] border border-white/10 text-slate-300 hover:bg-white/[0.06] hover:border-blue-400/30 hover:text-white transition-all"
+                  >
+                    {p}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Composer */}
+            <div className="relative rounded-2xl bg-white/[0.04] border border-white/10 focus-within:border-blue-400/40 focus-within:shadow-[0_0_0_4px_hsl(217_91%_60%/0.08)] transition-all overflow-hidden">
               <textarea
                 ref={textareaRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={documentContext && !documentReadError ? "Ask anything about the uploaded document..." : "Ask MINDSPARK AI anything..."}
-                className="w-full bg-card/50 border border-neon-cyan/20 rounded-xl px-4 py-3 text-foreground resize-none focus:outline-none focus:border-neon-cyan/50 focus:shadow-[0_0_12px_hsl(var(--neon-cyan)/0.15)] transition-all placeholder:text-muted-foreground/60"
+                placeholder={
+                  documentContext && !documentReadError
+                    ? "Ask anything about the uploaded document..."
+                    : "Message MINDSPARK AI..."
+                }
+                className="w-full bg-transparent px-4 pt-3.5 pb-12 text-sm text-slate-100 placeholder:text-slate-500 resize-none focus:outline-none"
                 rows={1}
                 disabled={isLoading || isParsingDoc}
               />
+
+              {/* Bottom toolbar */}
+              <div className="absolute bottom-2 left-2 right-2 flex items-center gap-1">
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isLoading || isParsingDoc}
+                  className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:text-blue-300 hover:bg-white/[0.06] transition-all disabled:opacity-40"
+                  title={`Upload file (max ${MAX_FILE_MB}MB)`}
+                >
+                  <Paperclip className="w-4 h-4" />
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".pdf,.doc,.docx,.txt,.csv,.xlsx,.xls,.pptx,.ppt,.md,.json,.png,.jpg,.jpeg,.gif,.webp"
+                  onChange={(e) => { if (e.target.files?.[0]) handleFileUpload(e.target.files[0]); e.target.value = ""; }}
+                  className="hidden"
+                />
+                <button
+                  onClick={toggleVoiceInput}
+                  disabled={isLoading || isParsingDoc}
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all disabled:opacity-40 ${
+                    isListening
+                      ? "text-rose-300 bg-rose-500/10"
+                      : "text-slate-400 hover:text-violet-300 hover:bg-white/[0.06]"
+                  }`}
+                  title={isListening ? "Stop listening" : "Voice input"}
+                >
+                  {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                </button>
+
+                {/* Model pill */}
+                <button
+                  className="ml-1 flex items-center gap-1 text-[11px] px-2 py-1 rounded-md bg-white/[0.04] border border-white/10 text-slate-300 hover:bg-white/[0.07] transition-all"
+                  title="Select model"
+                >
+                  <Sparkles className="w-3 h-3 text-blue-300" />
+                  Gemini 3 Pro
+                  <ChevronDown className="w-3 h-3 opacity-60" />
+                </button>
+
+                <div className="ml-auto flex items-center gap-2">
+                  <span className="text-[10px] text-slate-500 hidden sm:inline">
+                    {input.length} chars · ⏎ to send
+                  </span>
+                  <button
+                    onClick={() => handleSend()}
+                    disabled={isLoading || isParsingDoc || !input.trim()}
+                    className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-xs font-medium text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 shadow-[0_4px_16px_-4px_hsl(217_91%_60%/0.7)] hover:shadow-[0_6px_20px_-4px_hsl(217_91%_60%/0.9)] transition-all disabled:opacity-40 disabled:shadow-none"
+                  >
+                    {isLoading ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <>
+                        Send
+                        <Send className="w-3.5 h-3.5" />
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
             </div>
-            <button
-              onClick={toggleVoiceInput}
-              disabled={isLoading || isParsingDoc}
-              className={`flex-shrink-0 w-11 h-11 rounded-xl border flex items-center justify-center transition-all disabled:opacity-40 ${
-                isListening
-                  ? "border-neon-red/50 bg-neon-red/10 text-neon-red shadow-[0_0_12px_hsl(var(--neon-red)/0.3)]"
-                  : "border-neon-purple/30 bg-card/50 text-neon-purple hover:bg-neon-purple/10 hover:border-neon-purple/50"
-              }`}
-              title={isListening ? "Stop listening" : "Voice input"}
-            >
-              {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
-            </button>
-            <button
-              onClick={() => handleSend()}
-              disabled={isLoading || isParsingDoc || !input.trim()}
-              className="flex-shrink-0 w-11 h-11 rounded-xl bg-gradient-to-r from-neon-cyan to-neon-purple text-white flex items-center justify-center hover:shadow-[0_0_15px_hsl(var(--neon-cyan)/0.3)] transition-all disabled:opacity-40"
-            >
-              {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-            </button>
+
+            <p className="text-[10px] text-slate-500 text-center mt-2">
+              MINDSPARK can make mistakes. Verify important information.
+            </p>
           </div>
         </div>
       </div>
+
+      {/* Right insights panel */}
+      <InsightsPanel
+        isOpen={insightsOpen}
+        onToggle={() => setInsightsOpen(!insightsOpen)}
+        messageCount={messages.length}
+        documentName={documentContext && !documentReadError ? uploadedFile?.name || "Recent document" : null}
+        onSuggestion={(text) => setInput(text)}
+      />
     </div>
   );
 };
