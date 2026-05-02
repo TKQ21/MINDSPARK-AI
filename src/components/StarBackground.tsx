@@ -70,42 +70,6 @@ const StarBackground: React.FC = () => {
         }}
       />
 
-      {/* Moon */}
-      <div
-        className="absolute animate-float"
-        style={{ top: "6%", right: "10%", width: 70, height: 70 }}
-      >
-        <div
-          className="rounded-full w-full h-full"
-          style={{
-            background: "radial-gradient(circle at 30% 30%, hsl(50 90% 95%), hsl(45 60% 75%), hsl(40 40% 55%))",
-            boxShadow:
-              "0 0 30px hsl(50 80% 80% / 0.5), 0 0 60px hsl(50 80% 80% / 0.2), 0 0 100px hsl(50 80% 80% / 0.1)",
-          }}
-        />
-        {/* Moon craters */}
-        <div
-          className="absolute rounded-full"
-          style={{
-            top: "25%",
-            left: "40%",
-            width: 10,
-            height: 10,
-            background: "hsl(45 30% 60% / 0.4)",
-          }}
-        />
-        <div
-          className="absolute rounded-full"
-          style={{
-            top: "50%",
-            left: "25%",
-            width: 7,
-            height: 7,
-            background: "hsl(45 30% 60% / 0.3)",
-          }}
-        />
-      </div>
-
       {/* Stars */}
       {stars.map((star) => (
         <div
