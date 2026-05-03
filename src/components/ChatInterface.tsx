@@ -417,7 +417,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     if (isListening) { recognitionRef.current?.stop(); setIsListening(false); return; }
 
     const recognition = new SpeechRecognition();
-    recognition.lang = "hi-IN";
+    recognition.lang = navigator.language || "en-US";
     recognition.interimResults = true;
     recognition.continuous = true;
     recognitionRef.current = recognition;
@@ -453,7 +453,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         className="pointer-events-none absolute inset-0 z-0"
         style={{
           background:
-            "radial-gradient(ellipse 80% 60% at 15% 5%, hsl(230 90% 35% / 0.35), transparent 60%), radial-gradient(ellipse 70% 60% at 90% 90%, hsl(270 85% 40% / 0.28), transparent 60%), radial-gradient(ellipse 60% 50% at 50% 100%, hsl(217 91% 50% / 0.18), transparent 70%)",
+            "radial-gradient(ellipse 80% 60% at 15% 5%, hsl(217 91% 45% / 0.35), transparent 60%), radial-gradient(ellipse 70% 60% at 90% 90%, hsl(190 95% 35% / 0.24), transparent 60%), radial-gradient(ellipse 60% 50% at 50% 100%, hsl(217 91% 50% / 0.18), transparent 70%)",
         }}
       />
       <div
@@ -535,14 +535,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
                   animate={{ opacity: 1, y: 0 }}
                   className="flex gap-3"
                 >
-                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 via-indigo-500 to-violet-500 flex items-center justify-center shadow-[0_4px_18px_-4px_hsl(217_91%_60%/0.7)]">
-                    <Loader2 className="w-4 h-4 text-white animate-spin" />
+                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 via-cyan-400 to-blue-600 flex items-center justify-center shadow-[0_4px_18px_-4px_hsl(217_91%_60%/0.7)]">
+                    <Sparkles className="w-4 h-4 text-white animate-pulse" />
                   </div>
                   <div className="rounded-2xl px-4 py-3 bg-white/[0.04] border border-white/10 backdrop-blur-xl">
-                    <div className="flex gap-1.5">
+                    <div className="flex items-center gap-2 text-xs text-slate-300">
+                      <span>MINDSPARK AI typing</span>
                       <span className="w-2 h-2 rounded-full bg-blue-400" style={{ animation: "typing-dot 1.4s infinite 0s" }} />
-                      <span className="w-2 h-2 rounded-full bg-indigo-400" style={{ animation: "typing-dot 1.4s infinite 0.2s" }} />
-                      <span className="w-2 h-2 rounded-full bg-violet-400" style={{ animation: "typing-dot 1.4s infinite 0.4s" }} />
+                      <span className="w-2 h-2 rounded-full bg-cyan-400" style={{ animation: "typing-dot 1.4s infinite 0.2s" }} />
+                      <span className="w-2 h-2 rounded-full bg-blue-300" style={{ animation: "typing-dot 1.4s infinite 0.4s" }} />
                     </div>
                   </div>
                 </motion.div>

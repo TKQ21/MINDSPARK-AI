@@ -12,7 +12,6 @@ import {
   RotateCw,
   ThumbsUp,
   ThumbsDown,
-  CheckCheck,
   ExternalLink,
 } from "lucide-react";
 import { motion } from "framer-motion";
@@ -63,7 +62,7 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
           </button>
           <button
             onClick={handleOpen}
-            className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-violet-300 px-2 py-1 rounded transition-colors"
+            className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-blue-300 px-2 py-1 rounded transition-colors"
           >
             <ExternalLink className="w-3 h-3" />
             Open
@@ -140,41 +139,26 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onRegenerate }) 
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-      className={`group flex gap-3 ${isBot ? "" : "flex-row-reverse"}`}
+      className={`group flex gap-3 ${isBot ? "" : "justify-end"}`}
     >
       {/* Avatar */}
-      <div
-        className={`flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center ${
-          isBot
-            ? "bg-gradient-to-br from-blue-500 via-indigo-500 to-violet-500 shadow-[0_4px_18px_-4px_hsl(217_91%_60%/0.7)]"
-            : "bg-gradient-to-br from-slate-700 to-slate-800 border border-white/10"
-        }`}
-      >
-        {isBot ? (
+      {isBot && (
+        <div className="flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center bg-gradient-to-br from-blue-500 via-cyan-400 to-blue-600 shadow-[0_4px_18px_-4px_hsl(217_91%_60%/0.7)]">
           <Sparkles className="w-4 h-4 text-white" />
-        ) : (
-          <span className="text-xs font-semibold text-slate-200">U</span>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Content column */}
-      <div className={`flex-1 max-w-[85%] ${isBot ? "" : "flex flex-col items-end"}`}>
+      <div className={`${isBot ? "flex-1 max-w-[85%]" : "max-w-[78%] flex flex-col items-end"}`}>
         {/* Meta row */}
         <div
           className={`flex items-center gap-2 mb-1 text-[10px] text-slate-500 ${
             isBot ? "" : "flex-row-reverse"
           }`}
         >
-          <span className="font-medium text-slate-400">
-            {isBot ? "MINDSPARK AI" : "You"}
-          </span>
-          <span>·</span>
+          {isBot && <span className="font-medium text-slate-400">MINDSPARK AI</span>}
+          {isBot && <span>·</span>}
           <span>{formatTime(message.id)}</span>
-          {!isBot && (
-            <span className="flex items-center gap-0.5 text-blue-400">
-              <CheckCheck className="w-3 h-3" /> Delivered
-            </span>
-          )}
         </div>
 
         {/* Bubble */}
@@ -182,7 +166,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onRegenerate }) 
           className={`relative rounded-2xl px-4 py-3 backdrop-blur-xl border transition-all ${
             isBot
               ? "bg-gradient-to-br from-white/[0.04] to-white/[0.015] border-white/10 shadow-[0_8px_30px_-12px_rgba(0,0,0,0.5)]"
-              : "bg-gradient-to-br from-blue-600/20 to-indigo-600/10 border-blue-400/20 shadow-[0_8px_30px_-12px_hsl(217_91%_60%/0.4)]"
+              : "bg-gradient-to-br from-blue-600/25 to-cyan-500/10 border-blue-400/25 shadow-[0_8px_30px_-12px_hsl(217_91%_60%/0.45)]"
           }`}
         >
           {message.fileName && (

@@ -268,7 +268,7 @@ CORE RULES:
 8. If the question is unclear, ask a short clarifying question.
 9. Give complete, detailed answers — don't cut short.
 10. For programming: provide FULL working code with comments.
-11. Support Hindi and English naturally.
+11. Always reply in the exact language/script style used by the user: English → English, Hindi/Devanagari → Hindi, Hinglish/Roman Hindi → Hinglish in English letters, and any other language → that same language. Never convert Roman Hinglish into Devanagari unless asked.
 12. Always cite sources or reasoning when making claims.
 13. Format responses exactly like ChatGPT — structured, clean, readable.`;
 
@@ -287,6 +287,7 @@ Only the retrieved chunks from the user's uploaded document are provided as [Con
 6. Keep answers SHORT and precise — 2–4 sentences (unless listing items or producing a table).
 7. Use Markdown: tables for tabular data, **bold** for key values, bullet lists for enumerations.
 8. Preserve the document's wording for key facts and numbers.
+9. Match the user's language/script exactly: Hinglish/Roman Hindi must receive Hinglish/Roman Hindi, English must receive English, and other languages must receive the same language.
 
 📌 MANDATORY CITATION FORMAT — Every answer MUST end with:
 \`\`\`
@@ -388,7 +389,7 @@ serve(async (req) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-3-flash-preview",
+        model: "google/gemini-3.1-pro-preview",
         messages: apiMessages,
         temperature: hasDocContext ? 0 : 0.7,
         stream: true,
