@@ -333,10 +333,32 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
             </div>
           )}
           {tab === "settings" && (
-            <div className="space-y-2 text-xs text-slate-300">
+            <div className="space-y-3 text-xs text-slate-300">
               <p className="text-[10px] uppercase tracking-wider text-slate-500 px-1 mb-1">
                 Preferences
               </p>
+              <div className="rounded-xl p-3 bg-blue-500/10 border border-blue-400/20">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-semibold text-white">Free Plan</span>
+                  <span className="text-[10px] text-blue-200">Resets in 24h</span>
+                </div>
+                <ul className="space-y-1 text-slate-300">
+                  <li>• Limited daily tokens</li>
+                  <li>• 5 document reads / 24h</li>
+                  <li>• 5 image generations / 24h</li>
+                </ul>
+              </div>
+              <div className="rounded-xl p-3 bg-gradient-to-br from-blue-600/20 to-cyan-500/10 border border-blue-400/25">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-semibold text-white">Pro Plan</span>
+                  <span className="text-[10px] text-cyan-200">₹200</span>
+                </div>
+                <ul className="space-y-1 text-slate-300">
+                  <li>• Unlimited chat access</li>
+                  <li>• Unlimited documents + image generation</li>
+                  <li>• Priority Gemini 3.1 Pro responses</li>
+                </ul>
+              </div>
               {["Appearance", "Language", "Notifications", "Privacy"].map((s) => (
                 <button
                   key={s}
