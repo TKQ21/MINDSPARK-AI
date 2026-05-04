@@ -49,7 +49,7 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onSuggestionClick }) => {
           </div>
           <h1 className="text-4xl sm:text-5xl font-semibold tracking-tight text-white mb-3">
             How can I help you{" "}
-            <span className="bg-gradient-to-r from-blue-400 via-indigo-300 to-violet-400 bg-clip-text text-transparent">
+            <span className="bg-gradient-to-r from-[#60A5FA] via-[#3B82F6] to-[#2563EB] bg-clip-text text-transparent">
               today?
             </span>
           </h1>
@@ -91,9 +91,9 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onSuggestionClick }) => {
               onClick={() => onSuggestionClick(s.text)}
               className="group relative text-left p-4 rounded-2xl bg-white/[0.03] border border-white/10 hover:border-blue-400/30 hover:bg-white/[0.05] transition-all overflow-hidden"
             >
-              <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-br from-blue-500/5 via-transparent to-violet-500/5 pointer-events-none" />
+              <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-br from-blue-500/5 via-transparent to-blue-500/5 pointer-events-none" />
               <div className="relative">
-                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500/20 to-violet-500/10 border border-blue-400/20 flex items-center justify-center mb-3">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500/20 to-blue-400/10 border border-blue-400/20 flex items-center justify-center mb-3">
                   <s.icon className="w-4 h-4 text-blue-300" />
                 </div>
                 <p className="text-xs uppercase tracking-wider text-slate-500 mb-1">{s.title}</p>

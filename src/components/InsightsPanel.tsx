@@ -17,9 +17,13 @@ interface InsightsPanelProps {
   messageCount: number;
   documentName?: string | null;
   onSuggestion: (text: string) => void;
+  tokensUsed: number;
+  tokenBudget: number;
+  isPro: boolean;
+  hoursLeft: number;
+  minutesLeft: number;
+  onUpgrade: () => void;
 }
-
-const TOKEN_BUDGET = 32000;
 
 const InsightsPanel: React.FC<InsightsPanelProps> = ({
   isOpen,
@@ -27,9 +31,16 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({
   messageCount,
   documentName,
   onSuggestion,
+  tokensUsed,
+  tokenBudget,
+  isPro,
+  hoursLeft,
+  minutesLeft,
+  onUpgrade,
 }) => {
-  const usedTokens = Math.min(TOKEN_BUDGET, messageCount * 480 + 320);
-  const usedPct = Math.round((usedTokens / TOKEN_BUDGET) * 100);
+  const usedTokens = isPro ? tokensUsed : Math.min(tokenBudget, tokensUsed);
+  const usedPct = isPro ? 0 : Math.min(100, Math.round((usedTokens / tokenBudget) * 100));
+  const barColor = usedPct >= 90 ? "from-rose-500 to-red-500" : usedPct >= 75 ? "from-amber-500 to-orange-500" : "from-[#3B82F6] to-[#2563EB]";
 
   const suggestions = [
     "Summarize this conversation in 5 bullets",
@@ -83,22 +94,29 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({
           {/* Token usage */}
           <div className="rounded-xl p-3 bg-white/[0.03] border border-white/10">
             <div className="flex items-center justify-between mb-2">
-              <span className="flex items-center gap-1.5 text-xs text-slate-300">
+              <span className="flex items-center gap-1.5 text-xs text-slate-300" title="Tokens are units of text. ~1 token ≈ 4 characters.">
                 <Cpu className="w-3.5 h-3.5 text-blue-300" /> Token usage
               </span>
               <span className="text-[10px] font-mono text-slate-400">
-                {usedTokens.toLocaleString()} / {TOKEN_BUDGET.toLocaleString()}
+                {isPro ? `${tokensUsed.toLocaleString()} · ∞` : `${usedTokens.toLocaleString()} / ${tokenBudget.toLocaleString()}`}
               </span>
             </div>
             <div className="h-1.5 rounded-full bg-white/[0.05] overflow-hidden">
               <motion.div
                 initial={{ width: 0 }}
-                animate={{ width: `${usedPct}%` }}
+                animate={{ width: `${isPro ? 12 : usedPct}%` }}
                 transition={{ duration: 0.6, ease: "easeOut" }}
-                className="h-full rounded-full bg-gradient-to-r from-blue-500 via-indigo-500 to-violet-500"
+                className={`h-full rounded-full bg-gradient-to-r ${isPro ? "from-[#3B82F6] to-[#60A5FA]" : barColor}`}
               />
             </div>
-            <p className="mt-1.5 text-[10px] text-slate-500">{usedPct}% of context window used</p>
+            <p className="mt-1.5 text-[10px] text-slate-500">
+              {isPro ? "Pro · unlimited usage" : `${usedPct}% used · resets in ${hoursLeft}h ${minutesLeft}m`}
+            </p>
+            {!isPro && usedPct >= 75 && (
+              <button onClick={onUpgrade} className="mt-2 w-full text-[11px] py-1.5 rounded-lg bg-blue-500/15 border border-blue-400/30 text-blue-200 hover:bg-blue-500/25 transition-all">
+                Upgrade to Pro · ₹200/mo
+              </button>
+            )}
           </div>
 
           {/* Session stats */}

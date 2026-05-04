@@ -16,6 +16,8 @@ import MessageBubble, { Message } from "./MessageBubble";
 import ChatSidebar, { Conversation } from "./ChatSidebar";
 import WelcomeScreen from "./WelcomeScreen";
 import InsightsPanel from "./InsightsPanel";
+import UpgradeModal from "./UpgradeModal";
+import { useTokenUsage } from "@/hooks/useTokenUsage";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
@@ -57,8 +59,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isListening, setIsListening] = useState(false);
+  const [voiceLang, setVoiceLang] = useState<string>("auto");
+  const [detectedLang, setDetectedLang] = useState<string | null>(null);
   const recognitionRef = useRef<any>(null);
   const navigate = useNavigate();
+
+  const usage = useTokenUsage();
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const [upgradeReason, setUpgradeReason] = useState<string | undefined>();
+  const openUpgrade = (reason?: string) => { setUpgradeReason(reason); setUpgradeOpen(true); };
 
   const messages = activeConvId ? messagesByConv[activeConvId] || [] : [];
 
@@ -234,6 +243,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       toast.error(`File too large. Max ${MAX_FILE_MB}MB.`);
       return;
     }
+    if (usage.docsExceeded) {
+      openUpgrade("You've used all 3 free document uploads for today.");
+      return;
+    }
     setDocumentReadError(null);
     const filePath = `${Date.now()}_${file.name}`;
     const { error: uploadError } = await supabase.storage.from("chat-uploads").upload(filePath, file);
@@ -245,6 +258,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     const { text: extractedText, error: parseError } = await parseDocument(publicUrl.publicUrl, file.name);
     if (extractedText) {
       setLatestDocumentContext(activeConvId, extractedText);
+      if (!usage.isPro) usage.addDoc();
       toast.success("📄 File ready. Ask me anything about it.");
       return;
     }
@@ -273,6 +287,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       };
       setMessagesByConv((prev) => ({ ...prev, [convId]: [...(prev[convId] || []), botMsg] }));
       await saveMessageToDB(convId, botMsg);
+      if (!usage.isPro) usage.addImage();
     } catch (e: any) {
       const errorMsg: Message = { id: crypto.randomUUID(), role: "assistant", content: `Sorry, I couldn't generate the image. ${e.message}` };
       setMessagesByConv((prev) => ({ ...prev, [convId]: [...(prev[convId] || []), errorMsg] }));
@@ -344,6 +359,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       }
       if (assistantSoFar) {
         await saveMessageToDB(convId, { id: botId, role: "assistant", content: assistantSoFar });
+        if (!usage.isPro) {
+          // approx 1 token per 4 chars (input + output)
+          const inputChars = allMessages.reduce((n, m) => n + m.content.length, 0);
+          const approx = Math.ceil((inputChars + assistantSoFar.length) / 4);
+          usage.addTokens(approx);
+        }
       }
     } catch (e: any) {
       const errorMsg: Message = { id: crypto.randomUUID(), role: "assistant", content: `Sorry, something went wrong. ${e.message}` };
@@ -355,6 +376,19 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   const handleSend = async (text?: string) => {
     const messageText = text || input.trim();
     if (!messageText || isLoading) return;
+
+    const wantsImg = isImageRequest(messageText);
+    if (!usage.isPro) {
+      if (wantsImg && usage.imagesExceeded) {
+        openUpgrade("You've used all 5 free image generations for today.");
+        return;
+      }
+      if (usage.tokensExceeded) {
+        openUpgrade("You've used all your free tokens for today.");
+        return;
+      }
+    }
+
     setInput("");
     setIsLoading(true);
     try {
@@ -417,7 +451,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     if (isListening) { recognitionRef.current?.stop(); setIsListening(false); return; }
 
     const recognition = new SpeechRecognition();
-    recognition.lang = navigator.language || "en-US";
+    const lang = voiceLang === "auto" ? (navigator.language || "en-US") : voiceLang;
+    recognition.lang = lang;
+    setDetectedLang(lang);
     recognition.interimResults = true;
     recognition.continuous = true;
     recognitionRef.current = recognition;
@@ -439,7 +475,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     recognition.onend = () => setIsListening(false);
     recognition.start();
     setIsListening(true);
-    toast.success("🎤 Listening...");
+    toast.success(`🎤 Listening (${lang})...`);
   };
 
   const activeTitle = activeConvId
@@ -486,6 +522,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         onToggle={() => setSidebarOpen(!sidebarOpen)}
         userName={userName}
         onLogout={handleLogout}
+        isPro={usage.isPro}
+        onUpgrade={() => openUpgrade()}
       />
 
       <div className="flex-1 flex flex-col relative z-10 min-w-0">
@@ -539,11 +577,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
                     <Sparkles className="w-4 h-4 text-white animate-pulse" />
                   </div>
                   <div className="rounded-2xl px-4 py-3 bg-white/[0.04] border border-white/10 backdrop-blur-xl">
-                    <div className="flex items-center gap-2 text-xs text-slate-300">
-                      <span>MINDSPARK AI typing</span>
-                      <span className="w-2 h-2 rounded-full bg-blue-400" style={{ animation: "typing-dot 1.4s infinite 0s" }} />
-                      <span className="w-2 h-2 rounded-full bg-cyan-400" style={{ animation: "typing-dot 1.4s infinite 0.2s" }} />
-                      <span className="w-2 h-2 rounded-full bg-blue-300" style={{ animation: "typing-dot 1.4s infinite 0.4s" }} />
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="typing-star">✦</span>
+                      <span className="text-blue-300 font-medium">MindSpark is typing</span>
+                      <span className="flex gap-0.5">
+                        <span className="w-1 h-1 rounded-full bg-blue-400 animate-pulse" />
+                        <span className="w-1 h-1 rounded-full bg-blue-400 animate-pulse" style={{ animationDelay: "0.2s" }} />
+                        <span className="w-1 h-1 rounded-full bg-blue-400 animate-pulse" style={{ animationDelay: "0.4s" }} />
+                      </span>
                     </div>
                   </div>
                 </motion.div>
@@ -637,12 +678,33 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
                   className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all disabled:opacity-40 ${
                     isListening
                       ? "text-rose-300 bg-rose-500/10"
-                      : "text-slate-400 hover:text-violet-300 hover:bg-white/[0.06]"
+                      : "text-slate-400 hover:text-blue-300 hover:bg-white/[0.06]"
                   }`}
                   title={isListening ? "Stop listening" : "Voice input"}
                 >
                   {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                 </button>
+                <select
+                  value={voiceLang}
+                  onChange={(e) => setVoiceLang(e.target.value)}
+                  className="text-[10px] bg-white/[0.04] border border-white/10 rounded-md text-slate-300 px-1.5 py-1 outline-none hover:bg-white/[0.07]"
+                  title="Voice language"
+                >
+                  <option value="auto">Auto</option>
+                  <option value="en-US">English</option>
+                  <option value="hi-IN">हिन्दी</option>
+                  <option value="es-ES">Español</option>
+                  <option value="fr-FR">Français</option>
+                  <option value="de-DE">Deutsch</option>
+                  <option value="ar-SA">العربية</option>
+                  <option value="ja-JP">日本語</option>
+                  <option value="zh-CN">中文</option>
+                </select>
+                {detectedLang && isListening && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-200 border border-blue-400/20">
+                    {detectedLang}
+                  </span>
+                )}
 
                 {/* Model pill */}
                 <button
@@ -661,7 +723,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
                   <button
                     onClick={() => handleSend()}
                     disabled={isLoading || isParsingDoc || !input.trim()}
-                    className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-xs font-medium text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 shadow-[0_4px_16px_-4px_hsl(217_91%_60%/0.7)] hover:shadow-[0_6px_20px_-4px_hsl(217_91%_60%/0.9)] transition-all disabled:opacity-40 disabled:shadow-none"
+                    className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-xs font-medium text-white bg-gradient-to-r from-[#2563EB] to-[#1D4ED8] hover:from-[#1D4ED8] hover:to-[#1E40AF] shadow-[0_4px_16px_-4px_rgba(37,99,235,0.7)] hover:shadow-[0_6px_20px_-4px_rgba(37,99,235,0.9)] transition-all disabled:opacity-40 disabled:shadow-none"
                   >
                     {isLoading ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -690,7 +752,30 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         messageCount={messages.length}
         documentName={documentContext && !documentReadError ? uploadedFile?.name || "Recent document" : null}
         onSuggestion={(text) => setInput(text)}
+        tokensUsed={usage.usage.tokens}
+        tokenBudget={usage.tokenBudget}
+        isPro={usage.isPro}
+        hoursLeft={usage.hoursLeft}
+        minutesLeft={usage.minutesLeft}
+        onUpgrade={() => openUpgrade()}
       />
+
+      <UpgradeModal
+        open={upgradeOpen}
+        onOpenChange={setUpgradeOpen}
+        hoursLeft={usage.hoursLeft}
+        minutesLeft={usage.minutesLeft}
+        reason={upgradeReason}
+        onUpgrade={() => { usage.setPlan("pro"); setUpgradeOpen(false); toast.success("✨ Welcome to MINDSPARK Pro!"); }}
+      />
+
+      <style>{`
+        @keyframes pulse-star {
+          0%, 100% { opacity: 0.3; transform: scale(0.95); }
+          50% { opacity: 1; transform: scale(1.1); }
+        }
+        .typing-star { animation: pulse-star 1.5s ease-in-out infinite; color: #3B82F6; font-size: 18px; display: inline-block; }
+      `}</style>
     </div>
   );
 };
