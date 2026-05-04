@@ -34,6 +34,8 @@ interface ChatSidebarProps {
   onToggle: () => void;
   userName?: string;
   onLogout?: () => void;
+  isPro?: boolean;
+  onUpgrade?: () => void;
 }
 
 type NavTab = "chats" | "history" | "team" | "settings";
@@ -49,6 +51,8 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
   onToggle,
   userName,
   onLogout,
+  isPro = false,
+  onUpgrade,
 }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
