@@ -16,6 +16,8 @@ import MessageBubble, { Message } from "./MessageBubble";
 import ChatSidebar, { Conversation } from "./ChatSidebar";
 import WelcomeScreen from "./WelcomeScreen";
 import InsightsPanel from "./InsightsPanel";
+import UpgradeModal from "./UpgradeModal";
+import { useTokenUsage } from "@/hooks/useTokenUsage";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
