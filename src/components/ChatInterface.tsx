@@ -723,7 +723,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
                   <button
                     onClick={() => handleSend()}
                     disabled={isLoading || isParsingDoc || !input.trim()}
-                    className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-xs font-medium text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 shadow-[0_4px_16px_-4px_hsl(217_91%_60%/0.7)] hover:shadow-[0_6px_20px_-4px_hsl(217_91%_60%/0.9)] transition-all disabled:opacity-40 disabled:shadow-none"
+                    className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-xs font-medium text-white bg-gradient-to-r from-[#2563EB] to-[#1D4ED8] hover:from-[#1D4ED8] hover:to-[#1E40AF] shadow-[0_4px_16px_-4px_rgba(37,99,235,0.7)] hover:shadow-[0_6px_20px_-4px_rgba(37,99,235,0.9)] transition-all disabled:opacity-40 disabled:shadow-none"
                   >
                     {isLoading ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -752,7 +752,30 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         messageCount={messages.length}
         documentName={documentContext && !documentReadError ? uploadedFile?.name || "Recent document" : null}
         onSuggestion={(text) => setInput(text)}
+        tokensUsed={usage.usage.tokens}
+        tokenBudget={usage.tokenBudget}
+        isPro={usage.isPro}
+        hoursLeft={usage.hoursLeft}
+        minutesLeft={usage.minutesLeft}
+        onUpgrade={() => openUpgrade()}
       />
+
+      <UpgradeModal
+        open={upgradeOpen}
+        onOpenChange={setUpgradeOpen}
+        hoursLeft={usage.hoursLeft}
+        minutesLeft={usage.minutesLeft}
+        reason={upgradeReason}
+        onUpgrade={() => { usage.setPlan("pro"); setUpgradeOpen(false); toast.success("✨ Welcome to MINDSPARK Pro!"); }}
+      />
+
+      <style>{`
+        @keyframes pulse-star {
+          0%, 100% { opacity: 0.3; transform: scale(0.95); }
+          50% { opacity: 1; transform: scale(1.1); }
+        }
+        .typing-star { animation: pulse-star 1.5s ease-in-out infinite; color: #3B82F6; font-size: 18px; display: inline-block; }
+      `}</style>
     </div>
   );
 };
