@@ -59,8 +59,15 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isListening, setIsListening] = useState(false);
+  const [voiceLang, setVoiceLang] = useState<string>("auto");
+  const [detectedLang, setDetectedLang] = useState<string | null>(null);
   const recognitionRef = useRef<any>(null);
   const navigate = useNavigate();
+
+  const usage = useTokenUsage();
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const [upgradeReason, setUpgradeReason] = useState<string | undefined>();
+  const openUpgrade = (reason?: string) => { setUpgradeReason(reason); setUpgradeOpen(true); };
 
   const messages = activeConvId ? messagesByConv[activeConvId] || [] : [];
 
