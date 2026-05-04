@@ -243,6 +243,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       toast.error(`File too large. Max ${MAX_FILE_MB}MB.`);
       return;
     }
+    if (usage.docsExceeded) {
+      openUpgrade("You've used all 3 free document uploads for today.");
+      return;
+    }
     setDocumentReadError(null);
     const filePath = `${Date.now()}_${file.name}`;
     const { error: uploadError } = await supabase.storage.from("chat-uploads").upload(filePath, file);
@@ -254,6 +258,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     const { text: extractedText, error: parseError } = await parseDocument(publicUrl.publicUrl, file.name);
     if (extractedText) {
       setLatestDocumentContext(activeConvId, extractedText);
+      if (!usage.isPro) usage.addDoc();
       toast.success("📄 File ready. Ask me anything about it.");
       return;
     }
