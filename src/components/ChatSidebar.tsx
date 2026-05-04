@@ -158,7 +158,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
       {/* Brand + collapse */}
       <div className="px-4 pt-4 pb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 via-indigo-500 to-violet-500 flex items-center justify-center shadow-[0_4px_18px_-4px_hsl(217_91%_60%/0.7)]">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#2563EB] via-[#3B82F6] to-[#60A5FA] flex items-center justify-center shadow-[0_4px_18px_-4px_hsl(217_91%_60%/0.7)]">
             <Sparkles className="w-4 h-4 text-white" />
           </div>
           <div className="leading-tight">
@@ -202,7 +202,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
       <div className="px-3 pb-2">
         <button
           onClick={onNew}
-          className="group w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-blue-600 via-indigo-600 to-violet-600 hover:from-blue-500 hover:via-indigo-500 hover:to-violet-500 shadow-[0_8px_24px_-8px_hsl(217_91%_60%/0.7)] hover:shadow-[0_10px_28px_-6px_hsl(217_91%_60%/0.9)] transition-all"
+          className="group w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-[#1D4ED8] via-[#2563EB] to-[#3B82F6] hover:from-[#2563EB] hover:via-[#3B82F6] hover:to-[#60A5FA] shadow-[0_8px_24px_-8px_hsl(217_91%_60%/0.7)] hover:shadow-[0_10px_28px_-6px_hsl(217_91%_60%/0.9)] transition-all"
         >
           <Plus className="w-4 h-4 transition-transform group-hover:rotate-90" />
           New Chat
@@ -251,7 +251,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
                     }`}
                   >
                     {active && (
-                      <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[2px] rounded-full bg-gradient-to-b from-blue-400 to-violet-400" />
+                      <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[2px] rounded-full bg-gradient-to-b from-[#3B82F6] to-[#60A5FA]" />
                     )}
                     <MessageSquare
                       className={`w-3.5 h-3.5 flex-shrink-0 ${
@@ -317,7 +317,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
               </p>
               {[
                 { name: "You", role: "Owner", color: "from-blue-500 to-indigo-500" },
-                { name: "AI Assistant", role: "Online", color: "from-violet-500 to-fuchsia-500" },
+                { name: "AI Assistant", role: "Online", color: "from-[#3B82F6] to-[#2563EB]" },
               ].map((m) => (
                 <div
                   key={m.name}
