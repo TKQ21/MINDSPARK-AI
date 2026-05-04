@@ -359,6 +359,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       }
       if (assistantSoFar) {
         await saveMessageToDB(convId, { id: botId, role: "assistant", content: assistantSoFar });
+        if (!usage.isPro) {
+          // approx 1 token per 4 chars (input + output)
+          const inputChars = allMessages.reduce((n, m) => n + m.content.length, 0);
+          const approx = Math.ceil((inputChars + assistantSoFar.length) / 4);
+          usage.addTokens(approx);
+        }
       }
     } catch (e: any) {
       const errorMsg: Message = { id: crypto.randomUUID(), role: "assistant", content: `Sorry, something went wrong. ${e.message}` };
@@ -370,6 +376,19 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   const handleSend = async (text?: string) => {
     const messageText = text || input.trim();
     if (!messageText || isLoading) return;
+
+    const wantsImg = isImageRequest(messageText);
+    if (!usage.isPro) {
+      if (wantsImg && usage.imagesExceeded) {
+        openUpgrade("You've used all 5 free image generations for today.");
+        return;
+      }
+      if (usage.tokensExceeded) {
+        openUpgrade("You've used all your free tokens for today.");
+        return;
+      }
+    }
+
     setInput("");
     setIsLoading(true);
     try {
@@ -432,7 +451,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     if (isListening) { recognitionRef.current?.stop(); setIsListening(false); return; }
 
     const recognition = new SpeechRecognition();
-    recognition.lang = navigator.language || "en-US";
+    const lang = voiceLang === "auto" ? (navigator.language || "en-US") : voiceLang;
+    recognition.lang = lang;
+    setDetectedLang(lang);
     recognition.interimResults = true;
     recognition.continuous = true;
     recognitionRef.current = recognition;
@@ -454,7 +475,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     recognition.onend = () => setIsListening(false);
     recognition.start();
     setIsListening(true);
-    toast.success("🎤 Listening...");
+    toast.success(`🎤 Listening (${lang})...`);
   };
 
   const activeTitle = activeConvId
