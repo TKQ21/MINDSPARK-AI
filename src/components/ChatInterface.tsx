@@ -522,6 +522,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         onToggle={() => setSidebarOpen(!sidebarOpen)}
         userName={userName}
         onLogout={handleLogout}
+        isPro={usage.isPro}
+        onUpgrade={() => openUpgrade()}
       />
 
       <div className="flex-1 flex flex-col relative z-10 min-w-0">
@@ -575,11 +577,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
                     <Sparkles className="w-4 h-4 text-white animate-pulse" />
                   </div>
                   <div className="rounded-2xl px-4 py-3 bg-white/[0.04] border border-white/10 backdrop-blur-xl">
-                    <div className="flex items-center gap-2 text-xs text-slate-300">
-                      <span>MINDSPARK AI typing</span>
-                      <span className="w-2 h-2 rounded-full bg-blue-400" style={{ animation: "typing-dot 1.4s infinite 0s" }} />
-                      <span className="w-2 h-2 rounded-full bg-cyan-400" style={{ animation: "typing-dot 1.4s infinite 0.2s" }} />
-                      <span className="w-2 h-2 rounded-full bg-blue-300" style={{ animation: "typing-dot 1.4s infinite 0.4s" }} />
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="typing-star">✦</span>
+                      <span className="text-blue-300 font-medium">MindSpark is typing</span>
+                      <span className="flex gap-0.5">
+                        <span className="w-1 h-1 rounded-full bg-blue-400 animate-pulse" />
+                        <span className="w-1 h-1 rounded-full bg-blue-400 animate-pulse" style={{ animationDelay: "0.2s" }} />
+                        <span className="w-1 h-1 rounded-full bg-blue-400 animate-pulse" style={{ animationDelay: "0.4s" }} />
+                      </span>
                     </div>
                   </div>
                 </motion.div>
@@ -673,12 +678,33 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
                   className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all disabled:opacity-40 ${
                     isListening
                       ? "text-rose-300 bg-rose-500/10"
-                      : "text-slate-400 hover:text-violet-300 hover:bg-white/[0.06]"
+                      : "text-slate-400 hover:text-blue-300 hover:bg-white/[0.06]"
                   }`}
                   title={isListening ? "Stop listening" : "Voice input"}
                 >
                   {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                 </button>
+                <select
+                  value={voiceLang}
+                  onChange={(e) => setVoiceLang(e.target.value)}
+                  className="text-[10px] bg-white/[0.04] border border-white/10 rounded-md text-slate-300 px-1.5 py-1 outline-none hover:bg-white/[0.07]"
+                  title="Voice language"
+                >
+                  <option value="auto">Auto</option>
+                  <option value="en-US">English</option>
+                  <option value="hi-IN">हिन्दी</option>
+                  <option value="es-ES">Español</option>
+                  <option value="fr-FR">Français</option>
+                  <option value="de-DE">Deutsch</option>
+                  <option value="ar-SA">العربية</option>
+                  <option value="ja-JP">日本語</option>
+                  <option value="zh-CN">中文</option>
+                </select>
+                {detectedLang && isListening && (
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-200 border border-blue-400/20">
+                    {detectedLang}
+                  </span>
+                )}
 
                 {/* Model pill */}
                 <button
