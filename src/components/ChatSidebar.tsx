@@ -338,39 +338,69 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
           )}
           {tab === "settings" && (
             <div className="space-y-3 text-xs text-slate-300">
-              <p className="text-[10px] uppercase tracking-wider text-slate-500 px-1 mb-1">
-                Preferences
-              </p>
-              <div className="rounded-xl p-3 bg-blue-500/10 border border-blue-400/20">
+              <p className="text-[10px] uppercase tracking-wider text-slate-500 px-1 mb-1">Subscription</p>
+
+              <div className={`rounded-xl p-3 border ${isPro ? "bg-white/[0.03] border-white/10" : "bg-blue-500/10 border-blue-400/25"}`}>
                 <div className="flex items-center justify-between mb-2">
                   <span className="font-semibold text-white">Free Plan</span>
-                  <span className="text-[10px] text-blue-200">Resets in 24h</span>
+                  {!isPro && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-200">Active</span>}
                 </div>
-                <ul className="space-y-1 text-slate-300">
-                  <li>• Limited daily tokens</li>
-                  <li>• 5 document reads / 24h</li>
+                <ul className="space-y-1 text-slate-300 text-[11px]">
+                  <li>• 32,000 tokens / 24h</li>
                   <li>• 5 image generations / 24h</li>
+                  <li>• 3 document uploads / 24h</li>
+                  <li>• Gemini 3 Pro only</li>
                 </ul>
               </div>
-              <div className="rounded-xl p-3 bg-gradient-to-br from-blue-600/20 to-cyan-500/10 border border-blue-400/25">
+
+              <div className={`rounded-xl p-3 border ${isPro ? "bg-gradient-to-br from-[#2563EB]/25 to-[#60A5FA]/10 border-blue-400/40" : "bg-white/[0.03] border-white/10"}`}>
                 <div className="flex items-center justify-between mb-2">
-                  <span className="font-semibold text-white">Pro Plan</span>
-                  <span className="text-[10px] text-cyan-200">₹200</span>
+                  <span className="font-semibold text-white">Pro Plan {isPro && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-200 ml-1">Active</span>}</span>
+                  <span className="text-[10px] text-blue-200">₹200/mo</span>
                 </div>
-                <ul className="space-y-1 text-slate-300">
-                  <li>• Unlimited chat access</li>
-                  <li>• Unlimited documents + image generation</li>
-                  <li>• Priority Gemini 3.1 Pro responses</li>
+                <ul className="space-y-1 text-slate-300 text-[11px]">
+                  <li>• Unlimited tokens & messages</li>
+                  <li>• Unlimited image generation</li>
+                  <li>• Unlimited document uploads</li>
+                  <li>• All models · Priority queue</li>
+                  <li>• Full analytics · Export · Persona</li>
                 </ul>
+                {!isPro && onUpgrade && (
+                  <button
+                    onClick={onUpgrade}
+                    className="mt-3 w-full text-[11px] font-semibold py-1.5 rounded-lg text-white bg-gradient-to-r from-[#2563EB] to-[#1D4ED8] hover:from-[#1D4ED8] hover:to-[#1E40AF] shadow-[0_4px_14px_-4px_rgba(37,99,235,0.7)] transition-all"
+                  >
+                    Upgrade to Pro
+                  </button>
+                )}
               </div>
-              {["Appearance", "Language", "Notifications", "Privacy"].map((s) => (
-                <button
-                  key={s}
-                  className="w-full text-left px-3 py-2 rounded-lg bg-white/[0.03] border border-white/5 hover:bg-white/[0.06] hover:border-blue-400/20 transition-all"
-                >
-                  {s}
-                </button>
-              ))}
+
+              <p className="text-[10px] uppercase tracking-wider text-slate-500 px-1 pt-2 mb-1">Comparison</p>
+              <div className="rounded-xl overflow-hidden border border-white/10 text-[10.5px]">
+                <table className="w-full">
+                  <thead className="bg-white/[0.04] text-slate-400">
+                    <tr><th className="text-left p-1.5">Feature</th><th className="p-1.5">Free</th><th className="p-1.5 text-blue-300">Pro</th></tr>
+                  </thead>
+                  <tbody className="text-slate-300">
+                    {[
+                      ["Tokens / day", "32k", "∞"],
+                      ["Image gen", "5", "∞"],
+                      ["Doc uploads", "3", "∞"],
+                      ["Models", "Gemini 3", "All"],
+                      ["Priority", "Standard", "High"],
+                      ["Export", "—", "✓"],
+                      ["Persona", "—", "✓"],
+                      ["Support", "Community", "Priority"],
+                    ].map(([f, a, b]) => (
+                      <tr key={f} className="border-t border-white/5">
+                        <td className="p-1.5">{f}</td>
+                        <td className="p-1.5 text-center">{a}</td>
+                        <td className="p-1.5 text-center text-blue-200">{b}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
