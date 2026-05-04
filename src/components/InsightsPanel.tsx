@@ -17,9 +17,13 @@ interface InsightsPanelProps {
   messageCount: number;
   documentName?: string | null;
   onSuggestion: (text: string) => void;
+  tokensUsed: number;
+  tokenBudget: number;
+  isPro: boolean;
+  hoursLeft: number;
+  minutesLeft: number;
+  onUpgrade: () => void;
 }
-
-const TOKEN_BUDGET = 32000;
 
 const InsightsPanel: React.FC<InsightsPanelProps> = ({
   isOpen,
@@ -27,9 +31,16 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({
   messageCount,
   documentName,
   onSuggestion,
+  tokensUsed,
+  tokenBudget,
+  isPro,
+  hoursLeft,
+  minutesLeft,
+  onUpgrade,
 }) => {
-  const usedTokens = Math.min(TOKEN_BUDGET, messageCount * 480 + 320);
-  const usedPct = Math.round((usedTokens / TOKEN_BUDGET) * 100);
+  const usedTokens = isPro ? tokensUsed : Math.min(tokenBudget, tokensUsed);
+  const usedPct = isPro ? 0 : Math.min(100, Math.round((usedTokens / tokenBudget) * 100));
+  const barColor = usedPct >= 90 ? "from-rose-500 to-red-500" : usedPct >= 75 ? "from-amber-500 to-orange-500" : "from-[#3B82F6] to-[#2563EB]";
 
   const suggestions = [
     "Summarize this conversation in 5 bullets",

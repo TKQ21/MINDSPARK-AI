@@ -242,7 +242,7 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onRegenerate }) 
             {onRegenerate && (
               <button
                 onClick={onRegenerate}
-                className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-violet-300 px-2 py-1 rounded-md hover:bg-white/[0.04] transition-colors"
+                className="flex items-center gap-1 text-[11px] text-slate-400 hover:text-blue-300 px-2 py-1 rounded-md hover:bg-white/[0.04] transition-colors"
               >
                 <RotateCw className="w-3 h-3" /> Regenerate
               </button>
