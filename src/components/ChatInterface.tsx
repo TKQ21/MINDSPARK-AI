@@ -287,6 +287,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       };
       setMessagesByConv((prev) => ({ ...prev, [convId]: [...(prev[convId] || []), botMsg] }));
       await saveMessageToDB(convId, botMsg);
+      if (!usage.isPro) usage.addImage();
     } catch (e: any) {
       const errorMsg: Message = { id: crypto.randomUUID(), role: "assistant", content: `Sorry, I couldn't generate the image. ${e.message}` };
       setMessagesByConv((prev) => ({ ...prev, [convId]: [...(prev[convId] || []), errorMsg] }));
