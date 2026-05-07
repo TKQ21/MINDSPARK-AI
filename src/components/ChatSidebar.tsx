@@ -4,7 +4,6 @@ import {
   MessageSquare,
   Trash2,
   LogOut,
-  User,
   Pencil,
   Check,
   ChevronLeft,
@@ -14,6 +13,8 @@ import {
   Users,
   Search,
   Sparkles,
+  Zap,
+  Lock,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -22,6 +23,8 @@ export interface Conversation {
   title: string;
   createdAt: Date;
 }
+
+export type SidebarView = "chats" | "history" | "team" | "upgrade" | "settings";
 
 interface ChatSidebarProps {
   conversations: Conversation[];
@@ -35,10 +38,9 @@ interface ChatSidebarProps {
   userName?: string;
   onLogout?: () => void;
   isPro?: boolean;
-  onUpgrade?: () => void;
+  view: SidebarView;
+  onViewChange: (v: SidebarView) => void;
 }
-
-type NavTab = "chats" | "history" | "team" | "settings";
 
 const ChatSidebar: React.FC<ChatSidebarProps> = ({
   conversations,
@@ -52,11 +54,11 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
   userName,
   onLogout,
   isPro = false,
-  onUpgrade,
+  view,
+  onViewChange,
 }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
-  const [tab, setTab] = useState<NavTab>("chats");
   const [search, setSearch] = useState("");
 
   const startEdit = (conv: Conversation, e: React.MouseEvent) => {
@@ -74,10 +76,11 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
     c.title.toLowerCase().includes(search.toLowerCase())
   );
 
-  const navItems: { key: NavTab; icon: any; label: string }[] = [
+  const navItems: { key: SidebarView; icon: any; label: string }[] = [
     { key: "chats", icon: MessageSquare, label: "Chats" },
     { key: "history", icon: History, label: "History" },
     { key: "team", icon: Users, label: "Team" },
+    { key: "upgrade", icon: Zap, label: "Upgrade" },
     { key: "settings", icon: Settings, label: "Settings" },
   ];
 
@@ -114,17 +117,20 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
             <button
               key={it.key}
               onClick={() => {
-                setTab(it.key);
+                onViewChange(it.key);
                 onToggle();
               }}
-              className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${
-                tab === it.key
+              className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all relative ${
+                view === it.key
                   ? "bg-blue-500/15 text-blue-300 border border-blue-400/30"
                   : "text-slate-500 hover:text-slate-200 hover:bg-white/[0.04] border border-transparent"
               }`}
               title={it.label}
             >
               <it.icon className="w-4 h-4" />
+              {it.key === "upgrade" && !isPro && (
+                <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+              )}
             </button>
           ))}
         </div>
@@ -155,7 +161,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
         backdropFilter: "blur(24px)",
       }}
     >
-      {/* Brand + collapse */}
+      {/* Brand */}
       <div className="px-4 pt-4 pb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#2563EB] via-[#3B82F6] to-[#60A5FA] flex items-center justify-center shadow-[0_4px_18px_-4px_hsl(217_91%_60%/0.7)]">
@@ -163,9 +169,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
           </div>
           <div className="leading-tight">
             <p className="text-sm font-semibold text-white tracking-tight">MINDSPARK</p>
-            <p className="text-[10px] uppercase tracking-[0.16em] text-blue-300/80">
-              AI Workspace
-            </p>
+            <p className="text-[10px] uppercase tracking-[0.16em] text-blue-300/80">AI Workspace</p>
           </div>
         </div>
         <button
@@ -177,41 +181,53 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
         </button>
       </div>
 
-      {/* Nav tabs */}
-      <div className="px-3 pb-3">
-        <div className="grid grid-cols-4 gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/5">
-          {navItems.map((it) => (
+      {/* Nav (vertical list now since 5 items) */}
+      <div className="px-3 pb-2 space-y-0.5">
+        {navItems.map((it) => {
+          const active = view === it.key;
+          const isUpgrade = it.key === "upgrade";
+          return (
             <button
               key={it.key}
-              onClick={() => setTab(it.key)}
-              className={`flex flex-col items-center gap-0.5 py-1.5 rounded-lg text-[10px] font-medium transition-all ${
-                tab === it.key
-                  ? "bg-gradient-to-br from-blue-500/20 to-indigo-500/10 text-blue-200 shadow-inner"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-              title={it.label}
+              onClick={() => onViewChange(it.key)}
+              className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] font-medium transition-all ${
+                active
+                  ? "bg-gradient-to-r from-blue-500/20 to-indigo-500/5 text-blue-100 border border-blue-400/25"
+                  : "text-slate-400 hover:text-slate-100 hover:bg-white/[0.04] border border-transparent"
+              } ${isUpgrade && !isPro && !active ? "text-blue-300" : ""}`}
             >
               <it.icon className="w-3.5 h-3.5" />
-              {it.label}
+              <span className="flex-1 text-left">{it.label}</span>
+              {isUpgrade && !isPro && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-200 border border-blue-400/30">
+                  PRO
+                </span>
+              )}
+              {isUpgrade && isPro && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300">
+                  ✓
+                </span>
+              )}
             </button>
-          ))}
-        </div>
+          );
+        })}
       </div>
 
       {/* New Chat */}
-      <div className="px-3 pb-2">
-        <button
-          onClick={onNew}
-          className="group w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-[#1D4ED8] via-[#2563EB] to-[#3B82F6] hover:from-[#2563EB] hover:via-[#3B82F6] hover:to-[#60A5FA] shadow-[0_8px_24px_-8px_hsl(217_91%_60%/0.7)] hover:shadow-[0_10px_28px_-6px_hsl(217_91%_60%/0.9)] transition-all"
-        >
-          <Plus className="w-4 h-4 transition-transform group-hover:rotate-90" />
-          New Chat
-        </button>
-      </div>
+      {(view === "chats" || view === "history") && (
+        <div className="px-3 pb-2">
+          <button
+            onClick={onNew}
+            className="group w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-xl text-sm font-medium text-white bg-gradient-to-r from-[#1D4ED8] via-[#2563EB] to-[#3B82F6] hover:from-[#2563EB] hover:via-[#3B82F6] hover:to-[#60A5FA] shadow-[0_8px_24px_-8px_hsl(217_91%_60%/0.7)] hover:shadow-[0_10px_28px_-6px_hsl(217_91%_60%/0.9)] transition-all"
+          >
+            <Plus className="w-4 h-4 transition-transform group-hover:rotate-90" />
+            New Chat
+          </button>
+        </div>
+      )}
 
-      {tab === "chats" || tab === "history" ? (
+      {view === "chats" || view === "history" ? (
         <>
-          {/* Search */}
           <div className="px-3 pb-2">
             <div className="relative">
               <Search className="w-3.5 h-3.5 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -224,7 +240,6 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
             </div>
           </div>
 
-          {/* List */}
           <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
             {filtered.length === 0 && (
               <p className="text-xs text-slate-500 text-center py-10 px-4 leading-relaxed">
@@ -253,11 +268,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
                     {active && (
                       <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[2px] rounded-full bg-gradient-to-b from-[#3B82F6] to-[#60A5FA]" />
                     )}
-                    <MessageSquare
-                      className={`w-3.5 h-3.5 flex-shrink-0 ${
-                        active ? "text-blue-300" : ""
-                      }`}
-                    />
+                    <MessageSquare className={`w-3.5 h-3.5 flex-shrink-0 ${active ? "text-blue-300" : ""}`} />
                     {editingId === conv.id ? (
                       <input
                         value={editTitle}
@@ -276,10 +287,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
                     <div className="flex items-center">
                       {editingId === conv.id ? (
                         <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            confirmEdit(conv.id);
-                          }}
+                          onClick={(e) => { e.stopPropagation(); confirmEdit(conv.id); }}
                           className="p-1 text-emerald-400"
                         >
                           <Check className="w-3 h-3" />
@@ -293,10 +301,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
                         </button>
                       )}
                       <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDelete(conv.id);
-                        }}
+                        onClick={(e) => { e.stopPropagation(); onDelete(conv.id); }}
                         className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-slate-400 hover:text-rose-400"
                       >
                         <Trash2 className="w-3 h-3" />
@@ -310,22 +315,15 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
         </>
       ) : (
         <div className="flex-1 overflow-y-auto px-3 py-2">
-          {tab === "team" && (
+          {view === "team" && (
             <div className="space-y-2">
-              <p className="text-[10px] uppercase tracking-wider text-slate-500 px-1 mb-1">
-                Workspace
-              </p>
+              <p className="text-[10px] uppercase tracking-wider text-slate-500 px-1 mb-1">Workspace</p>
               {[
                 { name: "You", role: "Owner", color: "from-blue-500 to-indigo-500" },
                 { name: "AI Assistant", role: "Online", color: "from-[#3B82F6] to-[#2563EB]" },
               ].map((m) => (
-                <div
-                  key={m.name}
-                  className="flex items-center gap-3 p-2.5 rounded-lg bg-white/[0.03] border border-white/5"
-                >
-                  <div
-                    className={`w-8 h-8 rounded-full bg-gradient-to-br ${m.color} flex items-center justify-center text-white text-xs font-semibold`}
-                  >
+                <div key={m.name} className="flex items-center gap-3 p-2.5 rounded-lg bg-white/[0.03] border border-white/5">
+                  <div className={`w-8 h-8 rounded-full bg-gradient-to-br ${m.color} flex items-center justify-center text-white text-xs font-semibold`}>
                     {m.name[0]}
                   </div>
                   <div className="leading-tight flex-1 min-w-0">
@@ -336,60 +334,39 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
               ))}
             </div>
           )}
-          {tab === "settings" && (
+          {view === "settings" && (
             <div className="space-y-3 text-xs text-slate-300">
-              <p className="text-[10px] uppercase tracking-wider text-slate-500 px-1 mb-1">Subscription</p>
+              <p className="text-[10px] uppercase tracking-wider text-slate-500 px-1 mb-1">Plan & Billing</p>
 
-              <div className={`rounded-xl p-3 border ${isPro ? "bg-white/[0.03] border-white/10" : "bg-blue-500/10 border-blue-400/25"}`}>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-semibold text-white">Free Plan</span>
-                  {!isPro && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-200">Active</span>}
+              <div className={`rounded-xl p-3 border ${isPro ? "bg-gradient-to-br from-[#2563EB]/25 to-[#60A5FA]/10 border-blue-400/40" : "bg-blue-500/10 border-blue-400/25"}`}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-semibold text-white">{isPro ? "Pro Plan" : "Free Plan"}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-200">Active</span>
                 </div>
-                <ul className="space-y-1 text-slate-300 text-[11px]">
-                  <li>• 32,000 tokens / 24h</li>
-                  <li>• 5 image generations / 24h</li>
-                  <li>• 3 document uploads / 24h</li>
-                  <li>• Gemini 3 Pro only</li>
-                </ul>
-              </div>
-
-              <div className={`rounded-xl p-3 border ${isPro ? "bg-gradient-to-br from-[#2563EB]/25 to-[#60A5FA]/10 border-blue-400/40" : "bg-white/[0.03] border-white/10"}`}>
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-semibold text-white">Pro Plan {isPro && <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-200 ml-1">Active</span>}</span>
-                  <span className="text-[10px] text-blue-200">₹200/mo</span>
-                </div>
-                <ul className="space-y-1 text-slate-300 text-[11px]">
-                  <li>• Unlimited tokens & messages</li>
-                  <li>• Unlimited image generation</li>
-                  <li>• Unlimited document uploads</li>
-                  <li>• All models · Priority queue</li>
-                  <li>• Full analytics · Export · Persona</li>
-                </ul>
-                {!isPro && onUpgrade && (
-                  <button
-                    onClick={onUpgrade}
-                    className="mt-3 w-full text-[11px] font-semibold py-1.5 rounded-lg text-white bg-gradient-to-r from-[#2563EB] to-[#1D4ED8] hover:from-[#1D4ED8] hover:to-[#1E40AF] shadow-[0_4px_14px_-4px_rgba(37,99,235,0.7)] transition-all"
-                  >
-                    Upgrade to Pro
-                  </button>
-                )}
+                <p className="text-[10.5px] text-slate-300">
+                  {isPro ? "Unlimited access to all models." : "32k tokens, 5 images, 3 docs per 24h."}
+                </p>
               </div>
 
               <p className="text-[10px] uppercase tracking-wider text-slate-500 px-1 pt-2 mb-1">Comparison</p>
               <div className="rounded-xl overflow-hidden border border-white/10 text-[10.5px]">
                 <table className="w-full">
                   <thead className="bg-white/[0.04] text-slate-400">
-                    <tr><th className="text-left p-1.5">Feature</th><th className="p-1.5">Free</th><th className="p-1.5 text-blue-300">Pro</th></tr>
+                    <tr>
+                      <th className="text-left p-1.5">Feature</th>
+                      <th className="p-1.5">Free</th>
+                      <th className="p-1.5 text-blue-300">Pro</th>
+                    </tr>
                   </thead>
                   <tbody className="text-slate-300">
                     {[
                       ["Tokens / day", "32k", "∞"],
                       ["Image gen", "5", "∞"],
                       ["Doc uploads", "3", "∞"],
-                      ["Models", "Gemini 3", "All"],
-                      ["Priority", "Standard", "High"],
+                      ["AI models", "1", "7"],
+                      ["Speed", "Standard", "Priority"],
+                      ["Insights", "Basic", "Full"],
                       ["Export", "—", "✓"],
-                      ["Persona", "—", "✓"],
                       ["Support", "Community", "Priority"],
                     ].map(([f, a, b]) => (
                       <tr key={f} className="border-t border-white/5">
@@ -401,12 +378,56 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
                   </tbody>
                 </table>
               </div>
+
+              <p className="text-[10px] uppercase tracking-wider text-slate-500 px-1 pt-2 mb-1">Models</p>
+              <div className="rounded-xl overflow-hidden border border-white/10 text-[10.5px]">
+                <table className="w-full">
+                  <thead className="bg-white/[0.04] text-slate-400">
+                    <tr>
+                      <th className="text-left p-1.5">Model</th>
+                      <th className="p-1.5">Plan</th>
+                      <th className="p-1.5">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-slate-300">
+                    {[
+                      ["Gemini 1.5 Flash", "Free", true],
+                      ["Gemini 2.0 Flash", "Pro", isPro],
+                      ["Gemini 1.5 Pro", "Pro", isPro],
+                      ["Llama 3.3 70B", "Pro", isPro],
+                      ["Llama 3.1 8B", "Pro", isPro],
+                      ["Mixtral 8x7B", "Pro", isPro],
+                      ["Gemma 2 9B", "Pro", isPro],
+                    ].map(([name, plan, unlocked]) => (
+                      <tr key={String(name)} className="border-t border-white/5">
+                        <td className="p-1.5">{name}</td>
+                        <td className="p-1.5 text-center">{plan}</td>
+                        <td className="p-1.5 text-center">
+                          {unlocked ? (
+                            <span className="text-emerald-300">✓ Active</span>
+                          ) : (
+                            <span className="text-slate-500 inline-flex items-center gap-0.5"><Lock className="w-2.5 h-2.5" /> Locked</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {!isPro && (
+                <button
+                  onClick={() => onViewChange("upgrade")}
+                  className="mt-2 w-full text-[11px] font-semibold py-2 rounded-lg text-white bg-gradient-to-r from-[#2563EB] to-[#1D4ED8] hover:from-[#1D4ED8] hover:to-[#1E40AF] shadow-[0_4px_14px_-4px_rgba(37,99,235,0.7)] transition-all flex items-center justify-center gap-1"
+                >
+                  <Zap className="w-3 h-3" /> Upgrade to Pro
+                </button>
+              )}
             </div>
           )}
         </div>
       )}
 
-      {/* Footer */}
       <div className="p-3 border-t border-white/5">
         {userName && (
           <div className="flex items-center gap-2.5 px-2 py-2 rounded-lg bg-white/[0.03] border border-white/5">
@@ -415,7 +436,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
             </div>
             <div className="flex-1 min-w-0 leading-tight">
               <p className="text-xs text-white truncate">{userName}</p>
-              <p className="text-[10px] text-slate-400">Pro · Gemini 3</p>
+              <p className="text-[10px] text-slate-400">{isPro ? "Pro · All models" : "Free · Gemini 1.5"}</p>
             </div>
             {onLogout && (
               <button

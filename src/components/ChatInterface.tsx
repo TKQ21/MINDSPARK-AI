@@ -13,10 +13,13 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import MessageBubble, { Message } from "./MessageBubble";
-import ChatSidebar, { Conversation } from "./ChatSidebar";
+import ChatSidebar, { Conversation, SidebarView } from "./ChatSidebar";
 import WelcomeScreen from "./WelcomeScreen";
 import InsightsPanel from "./InsightsPanel";
-import UpgradeModal from "./UpgradeModal";
+import UpgradePage from "./UpgradePage";
+import UsageBanner from "./UsageBanner";
+import ModelSelector from "./ModelSelector";
+import { loadSelectedModel, saveSelectedModel, ModelId, resolveModel } from "@/lib/models";
 import { useTokenUsage } from "@/hooks/useTokenUsage";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
@@ -65,9 +68,28 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   const navigate = useNavigate();
 
   const usage = useTokenUsage();
-  const [upgradeOpen, setUpgradeOpen] = useState(false);
-  const [upgradeReason, setUpgradeReason] = useState<string | undefined>();
-  const openUpgrade = (reason?: string) => { setUpgradeReason(reason); setUpgradeOpen(true); };
+  const [view, setView] = useState<SidebarView>("chats");
+  const [selectedModel, setSelectedModel] = useState<ModelId>(() => loadSelectedModel());
+
+  // If user loses Pro, force back to free model silently
+  useEffect(() => {
+    const resolved = resolveModel(selectedModel, usage.isPro);
+    if (resolved !== selectedModel) {
+      setSelectedModel(resolved);
+      saveSelectedModel(resolved);
+    }
+  }, [usage.isPro, selectedModel]);
+
+  const handleModelChange = (id: ModelId) => {
+    setSelectedModel(id);
+    saveSelectedModel(id);
+  };
+
+  const goUpgrade = () => setView("upgrade");
+  const activateProDemo = () => {
+    usage.setPlan("pro");
+    toast.success("✨ Welcome to MINDSPARK Pro! All models unlocked.");
+  };
 
   const messages = activeConvId ? messagesByConv[activeConvId] || [] : [];
 
@@ -244,7 +266,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       return;
     }
     if (usage.docsExceeded) {
-      openUpgrade("You've used all 3 free document uploads for today.");
+      toast.info("You've used all 3 free document uploads for today.");
+      goUpgrade();
       return;
     }
     setDocumentReadError(null);
@@ -298,7 +321,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   const handleStreamChat = async (allMessages: Message[], convId: string, docCtx: string | null) => {
     try {
       const apiMessages = allMessages.map((m) => ({ role: m.role, content: m.content }));
-      const body: any = { messages: apiMessages };
+      const body: any = { messages: apiMessages, model: resolveModel(selectedModel, usage.isPro), isPro: usage.isPro };
       if (docCtx) body.documentContext = docCtx;
 
       const resp = await fetch(CHAT_URL, {
@@ -380,11 +403,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     const wantsImg = isImageRequest(messageText);
     if (!usage.isPro) {
       if (wantsImg && usage.imagesExceeded) {
-        openUpgrade("You've used all 5 free image generations for today.");
+        toast.info("You've used all 5 free image generations for today.");
+        goUpgrade();
         return;
       }
       if (usage.tokensExceeded) {
-        openUpgrade("You've used all your free tokens for today.");
+        toast.info("You've used all your free tokens for today.");
+        goUpgrade();
         return;
       }
     }
@@ -523,7 +548,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         userName={userName}
         onLogout={handleLogout}
         isPro={usage.isPro}
-        onUpgrade={() => openUpgrade()}
+        view={view}
+        onViewChange={setView}
       />
 
       <div className="flex-1 flex flex-col relative z-10 min-w-0">
@@ -559,39 +585,59 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         </header>
 
         {/* Body */}
-        {messages.length === 0 && !activeConvId ? (
-          <WelcomeScreen onSuggestionClick={(text) => handleSend(text)} />
+        {view === "upgrade" ? (
+          <UpgradePage isPro={usage.isPro} onActivateDemo={activateProDemo} onBack={() => setView("chats")} />
+        ) : messages.length === 0 && !activeConvId ? (
+          <>
+            <UsageBanner
+              isPro={usage.isPro}
+              tokensUsed={usage.usage.tokens}
+              tokensLimit={usage.tokenBudget}
+              resetMs={Math.max(0, usage.usage.resetAt - Date.now())}
+              onUpgrade={goUpgrade}
+            />
+            <WelcomeScreen onSuggestionClick={(text) => handleSend(text)} />
+          </>
         ) : (
-          <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-6">
-            <div className="max-w-3xl mx-auto space-y-6">
-              {messages.map((msg) => (
-                <MessageBubble key={msg.id} message={msg} />
-              ))}
-              {(isLoading || isParsingDoc) && messages[messages.length - 1]?.role === "user" && (
-                <motion.div
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="flex gap-3"
-                >
-                  <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 via-cyan-400 to-blue-600 flex items-center justify-center shadow-[0_4px_18px_-4px_hsl(217_91%_60%/0.7)]">
-                    <Sparkles className="w-4 h-4 text-white animate-pulse" />
-                  </div>
-                  <div className="rounded-2xl px-4 py-3 bg-white/[0.04] border border-white/10 backdrop-blur-xl">
-                    <div className="flex items-center gap-2 text-sm">
-                      <span className="typing-star">✦</span>
-                      <span className="text-blue-300 font-medium">MindSpark is typing</span>
-                      <span className="flex gap-0.5">
-                        <span className="w-1 h-1 rounded-full bg-blue-400 animate-pulse" />
-                        <span className="w-1 h-1 rounded-full bg-blue-400 animate-pulse" style={{ animationDelay: "0.2s" }} />
-                        <span className="w-1 h-1 rounded-full bg-blue-400 animate-pulse" style={{ animationDelay: "0.4s" }} />
-                      </span>
+          <>
+            <UsageBanner
+              isPro={usage.isPro}
+              tokensUsed={usage.usage.tokens}
+              tokensLimit={usage.tokenBudget}
+              resetMs={Math.max(0, usage.usage.resetAt - Date.now())}
+              onUpgrade={goUpgrade}
+            />
+            <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-6">
+              <div className="max-w-3xl mx-auto space-y-6">
+                {messages.map((msg) => (
+                  <MessageBubble key={msg.id} message={msg} />
+                ))}
+                {(isLoading || isParsingDoc) && messages[messages.length - 1]?.role === "user" && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="flex gap-3"
+                  >
+                    <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 via-cyan-400 to-blue-600 flex items-center justify-center shadow-[0_4px_18px_-4px_hsl(217_91%_60%/0.7)]">
+                      <Sparkles className="w-4 h-4 text-white animate-pulse" />
                     </div>
-                  </div>
-                </motion.div>
-              )}
-              <div ref={messagesEndRef} />
+                    <div className="rounded-2xl px-4 py-3 bg-white/[0.04] border border-white/10 backdrop-blur-xl">
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="typing-star">✦</span>
+                        <span className="text-blue-300 font-medium">MindSpark is typing</span>
+                        <span className="flex gap-0.5">
+                          <span className="w-1 h-1 rounded-full bg-blue-400 animate-pulse" />
+                          <span className="w-1 h-1 rounded-full bg-blue-400 animate-pulse" style={{ animationDelay: "0.2s" }} />
+                          <span className="w-1 h-1 rounded-full bg-blue-400 animate-pulse" style={{ animationDelay: "0.4s" }} />
+                        </span>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+                <div ref={messagesEndRef} />
+              </div>
             </div>
-          </div>
+          </>
         )}
 
         {/* File chip */}
@@ -706,15 +752,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
                   </span>
                 )}
 
-                {/* Model pill */}
-                <button
-                  className="ml-1 flex items-center gap-1 text-[11px] px-2 py-1 rounded-md bg-white/[0.04] border border-white/10 text-slate-300 hover:bg-white/[0.07] transition-all"
-                  title="Select model"
-                >
-                  <Sparkles className="w-3 h-3 text-blue-300" />
-                  Gemini 3 Pro
-                  <ChevronDown className="w-3 h-3 opacity-60" />
-                </button>
+                <ModelSelector
+                  value={selectedModel}
+                  onChange={handleModelChange}
+                  isPro={usage.isPro}
+                  onUpgrade={goUpgrade}
+                />
 
                 <div className="ml-auto flex items-center gap-2">
                   <span className="text-[10px] text-slate-500 hidden sm:inline">
@@ -757,16 +800,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         isPro={usage.isPro}
         hoursLeft={usage.hoursLeft}
         minutesLeft={usage.minutesLeft}
-        onUpgrade={() => openUpgrade()}
-      />
-
-      <UpgradeModal
-        open={upgradeOpen}
-        onOpenChange={setUpgradeOpen}
-        hoursLeft={usage.hoursLeft}
-        minutesLeft={usage.minutesLeft}
-        reason={upgradeReason}
-        onUpgrade={() => { usage.setPlan("pro"); setUpgradeOpen(false); toast.success("✨ Welcome to MINDSPARK Pro!"); }}
+        onUpgrade={goUpgrade}
       />
 
       <style>{`
