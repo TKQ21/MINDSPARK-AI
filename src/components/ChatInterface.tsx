@@ -266,7 +266,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       return;
     }
     if (usage.docsExceeded) {
-      openUpgrade("You've used all 3 free document uploads for today.");
+      (toast.info("You've used all 3 free document uploads for today." || "Upgrade to Pro"), goUpgrade());
       return;
     }
     setDocumentReadError(null);
@@ -402,11 +402,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     const wantsImg = isImageRequest(messageText);
     if (!usage.isPro) {
       if (wantsImg && usage.imagesExceeded) {
-        openUpgrade("You've used all 5 free image generations for today.");
+        (toast.info("You've used all 5 free image generations for today." || "Upgrade to Pro"), goUpgrade());
         return;
       }
       if (usage.tokensExceeded) {
-        openUpgrade("You've used all your free tokens for today.");
+        (toast.info("You've used all your free tokens for today." || "Upgrade to Pro"), goUpgrade());
         return;
       }
     }
@@ -780,7 +780,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         isPro={usage.isPro}
         hoursLeft={usage.hoursLeft}
         minutesLeft={usage.minutesLeft}
-        onUpgrade={() => openUpgrade()}
+        onUpgrade={() => (toast.info( || "Upgrade to Pro"), goUpgrade())}
       />
 
       <UpgradeModal
