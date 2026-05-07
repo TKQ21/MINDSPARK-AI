@@ -13,10 +13,13 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import MessageBubble, { Message } from "./MessageBubble";
-import ChatSidebar, { Conversation } from "./ChatSidebar";
+import ChatSidebar, { Conversation, SidebarView } from "./ChatSidebar";
 import WelcomeScreen from "./WelcomeScreen";
 import InsightsPanel from "./InsightsPanel";
-import UpgradeModal from "./UpgradeModal";
+import UpgradePage from "./UpgradePage";
+import UsageBanner from "./UsageBanner";
+import ModelSelector from "./ModelSelector";
+import { loadSelectedModel, saveSelectedModel, ModelId, resolveModel } from "@/lib/models";
 import { useTokenUsage } from "@/hooks/useTokenUsage";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
