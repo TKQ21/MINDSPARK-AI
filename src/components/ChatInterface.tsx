@@ -68,9 +68,28 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   const navigate = useNavigate();
 
   const usage = useTokenUsage();
-  const [upgradeOpen, setUpgradeOpen] = useState(false);
-  const [upgradeReason, setUpgradeReason] = useState<string | undefined>();
-  const openUpgrade = (reason?: string) => { setUpgradeReason(reason); setUpgradeOpen(true); };
+  const [view, setView] = useState<SidebarView>("chats");
+  const [selectedModel, setSelectedModel] = useState<ModelId>(() => loadSelectedModel());
+
+  // If user loses Pro, force back to free model silently
+  useEffect(() => {
+    const resolved = resolveModel(selectedModel, usage.isPro);
+    if (resolved !== selectedModel) {
+      setSelectedModel(resolved);
+      saveSelectedModel(resolved);
+    }
+  }, [usage.isPro, selectedModel]);
+
+  const handleModelChange = (id: ModelId) => {
+    setSelectedModel(id);
+    saveSelectedModel(id);
+  };
+
+  const goUpgrade = () => setView("upgrade");
+  const activateProDemo = () => {
+    usage.setPlan("pro");
+    toast.success("✨ Welcome to MINDSPARK Pro! All models unlocked.");
+  };
 
   const messages = activeConvId ? messagesByConv[activeConvId] || [] : [];
 
