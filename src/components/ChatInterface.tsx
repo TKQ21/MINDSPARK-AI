@@ -545,7 +545,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         userName={userName}
         onLogout={handleLogout}
         isPro={usage.isPro}
-        onUpgrade={() => openUpgrade()}
+        view={view}
+        onViewChange={setView}
       />
 
       <div className="flex-1 flex flex-col relative z-10 min-w-0">
