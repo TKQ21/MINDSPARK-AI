@@ -800,16 +800,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         isPro={usage.isPro}
         hoursLeft={usage.hoursLeft}
         minutesLeft={usage.minutesLeft}
-        onUpgrade={() => (toast.info( || "Upgrade to Pro"), goUpgrade())}
-      />
-
-      <UpgradeModal
-        open={upgradeOpen}
-        onOpenChange={setUpgradeOpen}
-        hoursLeft={usage.hoursLeft}
-        minutesLeft={usage.minutesLeft}
-        reason={upgradeReason}
-        onUpgrade={() => { usage.setPlan("pro"); setUpgradeOpen(false); toast.success("✨ Welcome to MINDSPARK Pro!"); }}
+        onUpgrade={goUpgrade}
       />
 
       <style>{`
