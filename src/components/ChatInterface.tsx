@@ -321,7 +321,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   const handleStreamChat = async (allMessages: Message[], convId: string, docCtx: string | null) => {
     try {
       const apiMessages = allMessages.map((m) => ({ role: m.role, content: m.content }));
-      const body: any = { messages: apiMessages };
+      const body: any = { messages: apiMessages, model: resolveModel(selectedModel, usage.isPro), isPro: usage.isPro };
       if (docCtx) body.documentContext = docCtx;
 
       const resp = await fetch(CHAT_URL, {
