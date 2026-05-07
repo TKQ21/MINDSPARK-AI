@@ -339,6 +339,30 @@ If multiple chunks were used, list each on a new line. The chunk numbers are sho
   return plugins[intent] || plugins.general;
 }
 
+const GROQ_MODELS = new Set([
+  "llama-3.3-70b-versatile",
+  "llama-3.1-8b-instant",
+  "mixtral-8x7b-32768",
+  "gemma2-9b-it",
+]);
+const GEMINI_MODELS = new Set([
+  "gemini-1.5-flash",
+  "gemini-2.0-flash",
+  "gemini-1.5-pro",
+]);
+const FREE_MODEL = "gemini-1.5-flash";
+
+// Map our public model id -> Lovable AI Gateway model id
+function geminiGatewayId(id: string): string {
+  // Lovable Gateway names use google/gemini-* prefix; map our friendly ids:
+  switch (id) {
+    case "gemini-1.5-flash": return "google/gemini-2.5-flash-lite";
+    case "gemini-2.0-flash": return "google/gemini-2.5-flash";
+    case "gemini-1.5-pro":   return "google/gemini-2.5-pro";
+    default: return "google/gemini-2.5-flash";
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
@@ -346,6 +370,13 @@ serve(async (req) => {
     const body = await req.json().catch(() => null);
     const messages = Array.isArray(body?.messages) ? body.messages : [];
     const documentContext = typeof body?.documentContext === "string" ? body.documentContext : "";
+    const requestedModel = typeof body?.model === "string" ? body.model : FREE_MODEL;
+    const isPro = !!body?.isPro;
+
+    // Server-side enforcement: free users only get the free model
+    let model = requestedModel;
+    if (!isPro && model !== FREE_MODEL) model = FREE_MODEL;
+    if (!GROQ_MODELS.has(model) && !GEMINI_MODELS.has(model)) model = FREE_MODEL;
 
     if (!messages.length) {
       return new Response(JSON.stringify({ error: "Messages are required." }), {
@@ -354,7 +385,7 @@ serve(async (req) => {
     }
 
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+    const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY");
 
     const lastUserMsg = [...messages].reverse().find((m: any) => m.role === "user");
     const hasDocContext = documentContext.trim().length > 0;
@@ -365,9 +396,9 @@ serve(async (req) => {
 
     if (hasDocContext) {
       const latestQuestion = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
-
-      // Semantic understanding of the user's intent BEFORE retrieval
-      const semantic = await semanticQueryAnalysis(latestQuestion, LOVABLE_API_KEY);
+      const semantic = LOVABLE_API_KEY
+        ? await semanticQueryAnalysis(latestQuestion, LOVABLE_API_KEY)
+        : { keywords: [], expandedQueries: [], wantsTable: false };
       const relevantChunks = pickRelevantChunks(documentContext, latestQuestion, semantic);
 
       if (!relevantChunks.length) {
@@ -376,12 +407,47 @@ serve(async (req) => {
 
       apiMessages.push({
         role: "system",
-        content: `[Context — Document Excerpts from the uploaded file]\n\n${buildRetrievedContext(relevantChunks)}\n\n[Instructions]\nAnswer the user's question using ONLY the chunks above. Tables (lines with \`|\`) are real data — read every row carefully and quote values verbatim. If the user asks about subjects, papers, topics, marks, syllabus, or any list item, scan the tables and structured sections in the chunks BEFORE saying the info is missing. If after careful reading the exact information truly does not appear, reply exactly: **This specific information is not in the document.** Always end with the mandatory citation block listing the chunk numbers you used.`,
+        content: `[Context — Document Excerpts from the uploaded file]\n\n${buildRetrievedContext(relevantChunks)}\n\n[Instructions]\nAnswer the user's question using ONLY the chunks above. Tables (lines with \`|\`) are real data — read every row carefully and quote values verbatim. If after careful reading the exact information truly does not appear, reply exactly: **This specific information is not in the document.** Always end with the citation block listing the chunk numbers you used.`,
       });
     }
 
     apiMessages.push(...messages);
 
+    // Route to Groq for Llama / Mixtral / Gemma
+    if (GROQ_MODELS.has(model)) {
+      if (!GROQ_API_KEY) {
+        return new Response(JSON.stringify({ error: "GROQ_API_KEY is not configured on the server." }), {
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      const groqResp = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${GROQ_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          messages: apiMessages,
+          temperature: hasDocContext ? 0 : 0.7,
+          max_tokens: 2048,
+          stream: true,
+        }),
+      });
+      if (!groqResp.ok) {
+        const t = await groqResp.text();
+        console.error("Groq error:", groqResp.status, t);
+        return new Response(JSON.stringify({ error: "Groq service error." }), {
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      return new Response(groqResp.body, {
+        headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+      });
+    }
+
+    // Otherwise Gemini via Lovable AI Gateway
+    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -389,7 +455,7 @@ serve(async (req) => {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-3.1-pro-preview",
+        model: geminiGatewayId(model),
         messages: apiMessages,
         temperature: hasDocContext ? 0 : 0.7,
         stream: true,
