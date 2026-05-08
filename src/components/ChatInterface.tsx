@@ -541,6 +541,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         userName={userName}
         onLogout={handleLogout}
         isPro={usage.isPro}
+        planStatus={usage.status}
         view={view}
         onViewChange={setView}
       />
