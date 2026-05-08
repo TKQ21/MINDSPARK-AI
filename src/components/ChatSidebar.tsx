@@ -38,6 +38,7 @@ interface ChatSidebarProps {
   userName?: string;
   onLogout?: () => void;
   isPro?: boolean;
+  planStatus?: "free" | "pro" | "pending";
   view: SidebarView;
   onViewChange: (v: SidebarView) => void;
 }
@@ -54,6 +55,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
   userName,
   onLogout,
   isPro = false,
+  planStatus = "free",
   view,
   onViewChange,
 }) => {
@@ -436,7 +438,13 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
             </div>
             <div className="flex-1 min-w-0 leading-tight">
               <p className="text-xs text-white truncate">{userName}</p>
-              <p className="text-[10px] text-slate-400">{isPro ? "Pro · All models" : "Free · Gemini 1.5"}</p>
+              {planStatus === "pro" ? (
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">⭐ Pro</span>
+              ) : planStatus === "pending" ? (
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-400/30">⏳ Pro Pending</span>
+              ) : (
+                <p className="text-[10px] text-slate-400">Free · Gemini 1.5</p>
+              )}
             </div>
             {onLogout && (
               <button

@@ -94,11 +94,11 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({
           {/* Token usage */}
           <div className="rounded-xl p-3 bg-white/[0.03] border border-white/10">
             <div className="flex items-center justify-between mb-2">
-              <span className="flex items-center gap-1.5 text-xs text-slate-300" title="Tokens are units of text. ~1 token ≈ 4 characters.">
-                <Cpu className="w-3.5 h-3.5 text-blue-300" /> Token usage
+              <span className="flex items-center gap-1.5 text-xs text-slate-300" title="Free plan: 10 questions/day">
+                <Cpu className="w-3.5 h-3.5 text-blue-300" /> Daily questions
               </span>
               <span className="text-[10px] font-mono text-slate-400">
-                {isPro ? `${tokensUsed.toLocaleString()} · ∞` : `${usedTokens.toLocaleString()} / ${tokenBudget.toLocaleString()}`}
+                {isPro ? `${tokensUsed} · ∞` : `${usedTokens} / ${tokenBudget}`}
               </span>
             </div>
             <div className="h-1.5 rounded-full bg-white/[0.05] overflow-hidden">

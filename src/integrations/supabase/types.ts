@@ -14,6 +14,33 @@ export type Database = {
   }
   public: {
     Tables: {
+      admin_settings: {
+        Row: {
+          admin_password_hash: string | null
+          id: number
+          pro_price: number
+          qr_code_url: string | null
+          updated_at: string
+          upi_id: string | null
+        }
+        Insert: {
+          admin_password_hash?: string | null
+          id?: number
+          pro_price?: number
+          qr_code_url?: string | null
+          updated_at?: string
+          upi_id?: string | null
+        }
+        Update: {
+          admin_password_hash?: string | null
+          id?: number
+          pro_price?: number
+          qr_code_url?: string | null
+          updated_at?: string
+          upi_id?: string | null
+        }
+        Relationships: []
+      }
       conversations: {
         Row: {
           created_at: string
@@ -78,36 +105,30 @@ export type Database = {
       }
       payment_requests: {
         Row: {
-          amount: number
-          created_at: string
-          currency: string
-          expires_at: string
+          email: string | null
           id: string
+          reviewed_at: string | null
           status: string
+          submitted_at: string
           txn_id: string
-          updated_at: string
           user_id: string
         }
         Insert: {
-          amount?: number
-          created_at?: string
-          currency?: string
-          expires_at?: string
+          email?: string | null
           id?: string
+          reviewed_at?: string | null
           status?: string
+          submitted_at?: string
           txn_id: string
-          updated_at?: string
           user_id: string
         }
         Update: {
-          amount?: number
-          created_at?: string
-          currency?: string
-          expires_at?: string
+          email?: string | null
           id?: string
+          reviewed_at?: string | null
           status?: string
+          submitted_at?: string
           txn_id?: string
-          updated_at?: string
           user_id?: string
         }
         Relationships: []
@@ -139,35 +160,50 @@ export type Database = {
         }
         Relationships: []
       }
-      subscriptions: {
+      user_plans: {
         Row: {
-          activated_at: string | null
           created_at: string
-          expires_at: string | null
+          doc_upload_count: number
+          email: string | null
           id: string
+          image_gen_count: number
           plan: string
-          txn_id: string | null
+          pro_activated_at: string | null
+          pro_expires_at: string | null
+          question_count: number
+          tokens_used: number
           updated_at: string
+          usage_reset_at: string
           user_id: string
         }
         Insert: {
-          activated_at?: string | null
           created_at?: string
-          expires_at?: string | null
+          doc_upload_count?: number
+          email?: string | null
           id?: string
+          image_gen_count?: number
           plan?: string
-          txn_id?: string | null
+          pro_activated_at?: string | null
+          pro_expires_at?: string | null
+          question_count?: number
+          tokens_used?: number
           updated_at?: string
+          usage_reset_at?: string
           user_id: string
         }
         Update: {
-          activated_at?: string | null
           created_at?: string
-          expires_at?: string | null
+          doc_upload_count?: number
+          email?: string | null
           id?: string
+          image_gen_count?: number
           plan?: string
-          txn_id?: string | null
+          pro_activated_at?: string | null
+          pro_expires_at?: string | null
+          question_count?: number
+          tokens_used?: number
           updated_at?: string
+          usage_reset_at?: string
           user_id?: string
         }
         Relationships: []

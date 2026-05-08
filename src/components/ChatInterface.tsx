@@ -20,7 +20,7 @@ import UpgradePage from "./UpgradePage";
 import UsageBanner from "./UsageBanner";
 import ModelSelector from "./ModelSelector";
 import { loadSelectedModel, saveSelectedModel, ModelId, resolveModel } from "@/lib/models";
-import { useTokenUsage } from "@/hooks/useTokenUsage";
+import { useUserPlan } from "@/hooks/useUserPlan";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
@@ -67,7 +67,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   const recognitionRef = useRef<any>(null);
   const navigate = useNavigate();
 
-  const usage = useTokenUsage();
+  const usage = useUserPlan();
   const [view, setView] = useState<SidebarView>("chats");
   const [selectedModel, setSelectedModel] = useState<ModelId>(() => loadSelectedModel());
 
@@ -86,10 +86,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   };
 
   const goUpgrade = () => setView("upgrade");
-  const activateProDemo = () => {
-    usage.setPlan("pro");
-    toast.success("✨ Welcome to MINDSPARK Pro! All models unlocked.");
-  };
 
   const messages = activeConvId ? messagesByConv[activeConvId] || [] : [];
 
@@ -383,10 +379,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       if (assistantSoFar) {
         await saveMessageToDB(convId, { id: botId, role: "assistant", content: assistantSoFar });
         if (!usage.isPro) {
-          // approx 1 token per 4 chars (input + output)
-          const inputChars = allMessages.reduce((n, m) => n + m.content.length, 0);
-          const approx = Math.ceil((inputChars + assistantSoFar.length) / 4);
-          usage.addTokens(approx);
+          usage.addQuestion();
         }
       }
     } catch (e: any) {
@@ -403,12 +396,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     const wantsImg = isImageRequest(messageText);
     if (!usage.isPro) {
       if (wantsImg && usage.imagesExceeded) {
-        toast.info("You've used all 5 free image generations for today.");
+        toast.info("You've used all 5 free image generations for today. Upgrade to Pro for unlimited.");
         goUpgrade();
         return;
       }
-      if (usage.tokensExceeded) {
-        toast.info("You've used all your free tokens for today.");
+      if (!wantsImg && usage.questionsExceeded) {
+        toast.info("You've used all 10 free questions for today. Upgrade to Pro for unlimited.");
         goUpgrade();
         return;
       }
@@ -548,6 +541,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         userName={userName}
         onLogout={handleLogout}
         isPro={usage.isPro}
+        planStatus={usage.status}
         view={view}
         onViewChange={setView}
       />
@@ -586,14 +580,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
 
         {/* Body */}
         {view === "upgrade" ? (
-          <UpgradePage isPro={usage.isPro} onActivateDemo={activateProDemo} onBack={() => setView("chats")} />
+          <UpgradePage isPro={usage.isPro} status={usage.status} onBack={() => setView("chats")} onSubmitted={() => usage.refresh()} />
         ) : messages.length === 0 && !activeConvId ? (
           <>
             <UsageBanner
               isPro={usage.isPro}
-              tokensUsed={usage.usage.tokens}
-              tokensLimit={usage.tokenBudget}
-              resetMs={Math.max(0, usage.usage.resetAt - Date.now())}
+              tokensUsed={usage.questionCount}
+              tokensLimit={usage.questionLimit}
+              resetMs={Math.max(0, usage.resetAt - Date.now())}
               onUpgrade={goUpgrade}
             />
             <WelcomeScreen onSuggestionClick={(text) => handleSend(text)} />
@@ -602,9 +596,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
           <>
             <UsageBanner
               isPro={usage.isPro}
-              tokensUsed={usage.usage.tokens}
-              tokensLimit={usage.tokenBudget}
-              resetMs={Math.max(0, usage.usage.resetAt - Date.now())}
+              tokensUsed={usage.questionCount}
+              tokensLimit={usage.questionLimit}
+              resetMs={Math.max(0, usage.resetAt - Date.now())}
               onUpgrade={goUpgrade}
             />
             <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-6">
@@ -733,8 +727,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
                 <select
                   value={voiceLang}
                   onChange={(e) => setVoiceLang(e.target.value)}
-                  className="text-[10px] bg-white/[0.04] border border-white/10 rounded-md text-slate-300 px-1.5 py-1 outline-none hover:bg-white/[0.07]"
+                  className="text-[10px] bg-[#0d1117] border border-white/10 rounded-md text-slate-200 px-1.5 py-1 outline-none hover:bg-[#161b22] focus:border-blue-400/40 [&>option]:bg-[#0d1117] [&>option]:text-[#e6edf3]"
                   title="Voice language"
+                  style={{ colorScheme: "dark" }}
                 >
                   <option value="auto">Auto</option>
                   <option value="en-US">English</option>
@@ -795,8 +790,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         messageCount={messages.length}
         documentName={documentContext && !documentReadError ? uploadedFile?.name || "Recent document" : null}
         onSuggestion={(text) => setInput(text)}
-        tokensUsed={usage.usage.tokens}
-        tokenBudget={usage.tokenBudget}
+        tokensUsed={usage.questionCount}
+        tokenBudget={usage.questionLimit}
         isPro={usage.isPro}
         hoursLeft={usage.hoursLeft}
         minutesLeft={usage.minutesLeft}
