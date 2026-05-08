@@ -38,6 +38,7 @@ interface ChatSidebarProps {
   userName?: string;
   onLogout?: () => void;
   isPro?: boolean;
+  planStatus?: "free" | "pro" | "pending";
   view: SidebarView;
   onViewChange: (v: SidebarView) => void;
 }
