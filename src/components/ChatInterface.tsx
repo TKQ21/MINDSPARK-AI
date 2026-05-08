@@ -67,7 +67,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   const recognitionRef = useRef<any>(null);
   const navigate = useNavigate();
 
-  const usage = useTokenUsage();
+  const usage = useUserPlan();
   const [view, setView] = useState<SidebarView>("chats");
   const [selectedModel, setSelectedModel] = useState<ModelId>(() => loadSelectedModel());
 
@@ -86,10 +86,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   };
 
   const goUpgrade = () => setView("upgrade");
-  const activateProDemo = () => {
-    usage.setPlan("pro");
-    toast.success("✨ Welcome to MINDSPARK Pro! All models unlocked.");
-  };
 
   const messages = activeConvId ? messagesByConv[activeConvId] || [] : [];
 
