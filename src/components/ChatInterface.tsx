@@ -379,10 +379,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       if (assistantSoFar) {
         await saveMessageToDB(convId, { id: botId, role: "assistant", content: assistantSoFar });
         if (!usage.isPro) {
-          // approx 1 token per 4 chars (input + output)
-          const inputChars = allMessages.reduce((n, m) => n + m.content.length, 0);
-          const approx = Math.ceil((inputChars + assistantSoFar.length) / 4);
-          usage.addTokens(approx);
+          usage.addQuestion();
         }
       }
     } catch (e: any) {
