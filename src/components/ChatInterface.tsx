@@ -396,12 +396,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     const wantsImg = isImageRequest(messageText);
     if (!usage.isPro) {
       if (wantsImg && usage.imagesExceeded) {
-        toast.info("You've used all 5 free image generations for today.");
+        toast.info("You've used all 5 free image generations for today. Upgrade to Pro for unlimited.");
         goUpgrade();
         return;
       }
-      if (usage.tokensExceeded) {
-        toast.info("You've used all your free tokens for today.");
+      if (!wantsImg && usage.questionsExceeded) {
+        toast.info("You've used all 10 free questions for today. Upgrade to Pro for unlimited.");
         goUpgrade();
         return;
       }
