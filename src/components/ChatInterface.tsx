@@ -726,8 +726,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
                 <select
                   value={voiceLang}
                   onChange={(e) => setVoiceLang(e.target.value)}
-                  className="text-[10px] bg-white/[0.04] border border-white/10 rounded-md text-slate-300 px-1.5 py-1 outline-none hover:bg-white/[0.07]"
+                  className="text-[10px] bg-[#0d1117] border border-white/10 rounded-md text-slate-200 px-1.5 py-1 outline-none hover:bg-[#161b22] focus:border-blue-400/40 [&>option]:bg-[#0d1117] [&>option]:text-[#e6edf3]"
                   title="Voice language"
+                  style={{ colorScheme: "dark" }}
                 >
                   <option value="auto">Auto</option>
                   <option value="en-US">English</option>
