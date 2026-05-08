@@ -20,7 +20,7 @@ import UpgradePage from "./UpgradePage";
 import UsageBanner from "./UsageBanner";
 import ModelSelector from "./ModelSelector";
 import { loadSelectedModel, saveSelectedModel, ModelId, resolveModel } from "@/lib/models";
-import { useTokenUsage } from "@/hooks/useTokenUsage";
+import { useUserPlan } from "@/hooks/useUserPlan";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
