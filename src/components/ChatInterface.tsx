@@ -788,8 +788,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         messageCount={messages.length}
         documentName={documentContext && !documentReadError ? uploadedFile?.name || "Recent document" : null}
         onSuggestion={(text) => setInput(text)}
-        tokensUsed={usage.usage.tokens}
-        tokenBudget={usage.tokenBudget}
+        tokensUsed={usage.questionCount}
+        tokenBudget={usage.questionLimit}
         isPro={usage.isPro}
         hoursLeft={usage.hoursLeft}
         minutesLeft={usage.minutesLeft}
