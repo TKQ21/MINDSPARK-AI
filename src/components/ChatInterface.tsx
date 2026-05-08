@@ -579,14 +579,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
 
         {/* Body */}
         {view === "upgrade" ? (
-          <UpgradePage isPro={usage.isPro} onActivateDemo={activateProDemo} onBack={() => setView("chats")} />
+          <UpgradePage isPro={usage.isPro} status={usage.status} onBack={() => setView("chats")} onSubmitted={() => usage.refresh()} />
         ) : messages.length === 0 && !activeConvId ? (
           <>
             <UsageBanner
               isPro={usage.isPro}
-              tokensUsed={usage.usage.tokens}
-              tokensLimit={usage.tokenBudget}
-              resetMs={Math.max(0, usage.usage.resetAt - Date.now())}
+              tokensUsed={usage.questionCount}
+              tokensLimit={usage.questionLimit}
+              resetMs={Math.max(0, usage.resetAt - Date.now())}
               onUpgrade={goUpgrade}
             />
             <WelcomeScreen onSuggestionClick={(text) => handleSend(text)} />
@@ -595,9 +595,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
           <>
             <UsageBanner
               isPro={usage.isPro}
-              tokensUsed={usage.usage.tokens}
-              tokensLimit={usage.tokenBudget}
-              resetMs={Math.max(0, usage.usage.resetAt - Date.now())}
+              tokensUsed={usage.questionCount}
+              tokensLimit={usage.questionLimit}
+              resetMs={Math.max(0, usage.resetAt - Date.now())}
               onUpgrade={goUpgrade}
             />
             <div className="flex-1 overflow-y-auto px-4 sm:px-6 py-6">
