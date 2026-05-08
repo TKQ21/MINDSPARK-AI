@@ -55,12 +55,12 @@ const UsageBanner: React.FC<Props> = ({ isPro, tokensUsed, tokensLimit, resetMs,
         )}
         {critical && (
           <span>
-            Running low — <strong>{remaining.toLocaleString()}</strong> tokens remaining today.
+            Running low — <strong>{remaining}</strong> questions left today.
           </span>
         )}
         {warn && (
           <span>
-            You've used <strong>{pct}%</strong> of today's free tokens. Resets in <span className="font-mono">{fmt(display)}</span>.
+            You've used <strong>{tokensUsed}/{tokensLimit}</strong> free questions. Resets in <span className="font-mono">{fmt(display)}</span>.
           </span>
         )}
       </div>
