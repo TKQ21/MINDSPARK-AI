@@ -18,6 +18,7 @@ function fmt(ms: number) {
 }
 
 const UsageBanner: React.FC<Props> = ({ isPro, tokensUsed, tokensLimit, resetMs, onUpgrade }) => {
+  const [mountedAt] = useState(Date.now());
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
@@ -30,8 +31,7 @@ const UsageBanner: React.FC<Props> = ({ isPro, tokensUsed, tokensLimit, resetMs,
   if (pct < 75) return null;
 
   const remaining = Math.max(0, tokensLimit - tokensUsed);
-  const baseDisplay = resetMs - (now - now); // keep a stable countdown via prop
-  const display = resetMs;
+  const display = Math.max(0, resetMs - (now - mountedAt));
 
   // Determine tone
   const blocked = pct >= 100;
