@@ -21,6 +21,7 @@ import UsageBanner from "./UsageBanner";
 import ModelSelector from "./ModelSelector";
 import { loadSelectedModel, saveSelectedModel, ModelId, resolveModel } from "@/lib/models";
 import { useUserPlan } from "@/hooks/useUserPlan";
+import { clearLegacyMindSparkKeys, clearUserMindSparkCache } from "@/lib/userStorage";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
@@ -69,20 +70,25 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
 
   const usage = useUserPlan();
   const [view, setView] = useState<SidebarView>("chats");
-  const [selectedModel, setSelectedModel] = useState<ModelId>(() => loadSelectedModel());
+  const [selectedModel, setSelectedModel] = useState<ModelId>("gemini-1.5-flash");
+
+  useEffect(() => {
+    if (!userId) return;
+    setSelectedModel(loadSelectedModel(userId));
+  }, [userId]);
 
   // If user loses Pro, force back to free model silently
   useEffect(() => {
     const resolved = resolveModel(selectedModel, usage.isPro);
     if (resolved !== selectedModel) {
       setSelectedModel(resolved);
-      saveSelectedModel(resolved);
+      saveSelectedModel(resolved, userId);
     }
-  }, [usage.isPro, selectedModel]);
+  }, [usage.isPro, selectedModel, userId]);
 
   const handleModelChange = (id: ModelId) => {
     setSelectedModel(id);
-    saveSelectedModel(id);
+    saveSelectedModel(id, userId);
   };
 
   const goUpgrade = () => setView("upgrade");
@@ -109,7 +115,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) setUserId(session.user.id);
+      if (session) {
+        clearLegacyMindSparkKeys();
+        setUserId(session.user.id);
+      }
     });
   }, []);
 
@@ -128,29 +137,29 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     loadConversations();
   }, [userId]);
 
+  const loadMessagesForConversation = useCallback(async (conversationId: string) => {
+    const { data } = await supabase
+      .from("messages")
+      .select("*")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: true });
+
+    const loaded = (data || []).map((m: any) => ({
+      id: m.id,
+      role: m.role as "user" | "assistant",
+      content: m.content,
+      imageUrl: m.image_url || undefined,
+      fileName: m.file_name || undefined,
+    }));
+
+    setMessagesByConv((prev) => ({ ...prev, [conversationId]: loaded }));
+    return loaded;
+  }, []);
+
   useEffect(() => {
     if (!activeConvId || messagesByConv[activeConvId]) return;
-    const loadMessages = async () => {
-      const { data } = await supabase
-        .from("messages")
-        .select("*")
-        .eq("conversation_id", activeConvId)
-        .order("created_at", { ascending: true });
-      if (data) {
-        setMessagesByConv((prev) => ({
-          ...prev,
-          [activeConvId]: data.map((m: any) => ({
-            id: m.id,
-            role: m.role as "user" | "assistant",
-            content: m.content,
-            imageUrl: m.image_url || undefined,
-            fileName: m.file_name || undefined,
-          })),
-        }));
-      }
-    };
-    loadMessages();
-  }, [activeConvId]);
+    loadMessagesForConversation(activeConvId);
+  }, [activeConvId, messagesByConv, loadMessagesForConversation]);
 
   useEffect(() => {
     if (activeConvId) {
@@ -172,6 +181,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   }, [input]);
 
   const handleLogout = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user?.id) clearUserMindSparkCache(user.id);
     await supabase.auth.signOut();
     navigate("/auth");
   };
@@ -184,6 +195,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       image_url: msg.imageUrl || null,
       file_name: msg.fileName || null,
     });
+  };
+
+  const getFunctionHeaders = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+    };
   };
 
   const createConversation = async (title: string): Promise<string> => {
@@ -237,10 +256,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       setIsParsingDoc(true);
       const resp = await fetch(PARSE_URL, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-        },
+        headers: await getFunctionHeaders(),
         body: JSON.stringify({ fileUrl, fileName }),
       });
       const data = await resp.json().catch(() => ({}));
@@ -277,7 +293,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     const { text: extractedText, error: parseError } = await parseDocument(publicUrl.publicUrl, file.name);
     if (extractedText) {
       setLatestDocumentContext(activeConvId, extractedText);
-      if (!usage.isPro) usage.addDoc();
+      if (!usage.isPro) await usage.addDoc();
       toast.success("📄 File ready. Ask me anything about it.");
       return;
     }
@@ -290,10 +306,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     try {
       const res = await fetch(IMAGE_URL, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-        },
+        headers: await getFunctionHeaders(),
         body: JSON.stringify({ prompt }),
       });
       if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Image generation failed"); }
@@ -306,7 +319,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       };
       setMessagesByConv((prev) => ({ ...prev, [convId]: [...(prev[convId] || []), botMsg] }));
       await saveMessageToDB(convId, botMsg);
-      if (!usage.isPro) usage.addImage();
+      if (!usage.isPro) await usage.addImage();
     } catch (e: any) {
       const errorMsg: Message = { id: crypto.randomUUID(), role: "assistant", content: `Sorry, I couldn't generate the image. ${e.message}` };
       setMessagesByConv((prev) => ({ ...prev, [convId]: [...(prev[convId] || []), errorMsg] }));
@@ -322,10 +335,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
 
       const resp = await fetch(CHAT_URL, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-        },
+        headers: await getFunctionHeaders(),
         body: JSON.stringify(body),
       });
       if (!resp.ok) {
@@ -379,7 +389,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       if (assistantSoFar) {
         await saveMessageToDB(convId, { id: botId, role: "assistant", content: assistantSoFar });
         if (!usage.isPro) {
-          usage.addQuestion();
+          await usage.addQuestion();
         }
       }
     } catch (e: any) {
@@ -434,7 +444,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       setMessagesByConv((prev) => ({ ...prev, [convId!]: [...(prev[convId!] || []), userMsg] }));
       await saveMessageToDB(convId, userMsg);
 
-      const allMessages = [...(messagesByConv[convId] || []), userMsg];
+      const priorMessages = messagesByConv[convId] || (activeConvId === convId ? await loadMessagesForConversation(convId) : []);
+      const allMessages = [...priorMessages, userMsg];
 
       if (!currentDocContext && documentReadError && uploadedFile && !wantsGeneratedImage) {
         const botMsg: Message = { id: crypto.randomUUID(), role: "assistant", content: documentReadError };
@@ -792,6 +803,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         onSuggestion={(text) => setInput(text)}
         tokensUsed={usage.questionCount}
         tokenBudget={usage.questionLimit}
+        imageCount={usage.imageCount}
+        imageLimit={usage.imageLimit}
         isPro={usage.isPro}
         hoursLeft={usage.hoursLeft}
         minutesLeft={usage.minutesLeft}

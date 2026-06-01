@@ -19,6 +19,8 @@ interface InsightsPanelProps {
   onSuggestion: (text: string) => void;
   tokensUsed: number;
   tokenBudget: number;
+  imageCount: number;
+  imageLimit: number;
   isPro: boolean;
   hoursLeft: number;
   minutesLeft: number;
@@ -33,6 +35,8 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({
   onSuggestion,
   tokensUsed,
   tokenBudget,
+  imageCount,
+  imageLimit,
   isPro,
   hoursLeft,
   minutesLeft,
@@ -129,9 +133,9 @@ const InsightsPanel: React.FC<InsightsPanelProps> = ({
             </div>
             <div className="rounded-xl p-3 bg-white/[0.03] border border-white/10">
               <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-slate-500 mb-1">
-                <Clock className="w-3 h-3" /> Latency
+                <Clock className="w-3 h-3" /> Images
               </div>
-              <p className="text-lg font-semibold text-white">~1.2s</p>
+              <p className="text-lg font-semibold text-white">{isPro ? `${imageCount} · ∞` : `${imageCount}/${imageLimit}`}</p>
             </div>
           </div>
 
