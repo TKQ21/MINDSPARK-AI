@@ -803,6 +803,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         onSuggestion={(text) => setInput(text)}
         tokensUsed={usage.questionCount}
         tokenBudget={usage.questionLimit}
+        imageCount={usage.imageCount}
+        imageLimit={usage.imageLimit}
         isPro={usage.isPro}
         hoursLeft={usage.hoursLeft}
         minutesLeft={usage.minutesLeft}
