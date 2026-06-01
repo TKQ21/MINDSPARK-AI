@@ -30,16 +30,24 @@ export const MODELS: ModelMeta[] = [
 
 export const STORAGE_KEY = "mindspark_selected_model";
 
-export function loadSelectedModel(): ModelId {
+export function getSelectedModelKey(userId?: string | null) {
+  return userId ? `${STORAGE_KEY}_${userId}` : null;
+}
+
+export function loadSelectedModel(userId?: string | null): ModelId {
   try {
-    const v = localStorage.getItem(STORAGE_KEY) as ModelId | null;
+    const key = getSelectedModelKey(userId);
+    const v = key ? (localStorage.getItem(key) as ModelId | null) : null;
     if (v && MODELS.some((m) => m.id === v)) return v;
   } catch {}
   return FREE_MODEL;
 }
 
-export function saveSelectedModel(id: ModelId) {
-  try { localStorage.setItem(STORAGE_KEY, id); } catch {}
+export function saveSelectedModel(id: ModelId, userId?: string | null) {
+  try {
+    const key = getSelectedModelKey(userId);
+    if (key) localStorage.setItem(key, id);
+  } catch {}
 }
 
 export function resolveModel(id: ModelId, isPro: boolean): ModelId {
