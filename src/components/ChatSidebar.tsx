@@ -357,7 +357,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-200">Active</span>
                 </div>
                 <p className="text-[10.5px] text-slate-300">
-                  {isPro ? "Unlimited access to all models." : "32k tokens, 5 images, 3 docs per 24h."}
+                  {isPro ? "Unlimited access to all models." : "10 questions and 5 images every 24h."}
                 </p>
               </div>
 
@@ -373,7 +373,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
                   </thead>
                   <tbody className="text-slate-300">
                     {[
-                      ["Tokens / day", "32k", "∞"],
+                      ["Questions / day", "10", "∞"],
                       ["Image gen", "5", "∞"],
                       ["Doc uploads", "3", "∞"],
                       ["AI models", "1", "7"],
