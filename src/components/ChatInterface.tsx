@@ -288,7 +288,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     const { text: extractedText, error: parseError } = await parseDocument(publicUrl.publicUrl, file.name);
     if (extractedText) {
       setLatestDocumentContext(activeConvId, extractedText);
-      if (!usage.isPro) usage.addDoc();
+      if (!usage.isPro) await usage.addDoc();
       toast.success("📄 File ready. Ask me anything about it.");
       return;
     }
@@ -317,7 +317,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       };
       setMessagesByConv((prev) => ({ ...prev, [convId]: [...(prev[convId] || []), botMsg] }));
       await saveMessageToDB(convId, botMsg);
-      if (!usage.isPro) usage.addImage();
+      if (!usage.isPro) await usage.addImage();
     } catch (e: any) {
       const errorMsg: Message = { id: crypto.randomUUID(), role: "assistant", content: `Sorry, I couldn't generate the image. ${e.message}` };
       setMessagesByConv((prev) => ({ ...prev, [convId]: [...(prev[convId] || []), errorMsg] }));
@@ -390,7 +390,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       if (assistantSoFar) {
         await saveMessageToDB(convId, { id: botId, role: "assistant", content: assistantSoFar });
         if (!usage.isPro) {
-          usage.addQuestion();
+          await usage.addQuestion();
         }
       }
     } catch (e: any) {
