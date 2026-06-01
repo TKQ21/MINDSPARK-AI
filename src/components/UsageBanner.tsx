@@ -18,8 +18,9 @@ function fmt(ms: number) {
 }
 
 const UsageBanner: React.FC<Props> = ({ isPro, tokensUsed, tokensLimit, resetMs, onUpgrade }) => {
-  const [mountedAt] = useState(Date.now());
+  const [deadline, setDeadline] = useState(() => Date.now() + resetMs);
   const [now, setNow] = useState(Date.now());
+  useEffect(() => setDeadline(Date.now() + resetMs), [resetMs]);
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
@@ -31,7 +32,7 @@ const UsageBanner: React.FC<Props> = ({ isPro, tokensUsed, tokensLimit, resetMs,
   if (pct < 75) return null;
 
   const remaining = Math.max(0, tokensLimit - tokensUsed);
-  const display = Math.max(0, resetMs - (now - mountedAt));
+  const display = Math.max(0, deadline - now);
 
   // Determine tone
   const blocked = pct >= 100;
