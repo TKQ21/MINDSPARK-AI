@@ -8,13 +8,13 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
-  History,
   Settings,
   Users,
   Search,
   Sparkles,
   Zap,
   Lock,
+  ShieldCheck,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -24,7 +24,7 @@ export interface Conversation {
   createdAt: Date;
 }
 
-export type SidebarView = "chats" | "history" | "team" | "upgrade" | "settings";
+export type SidebarView = "chats" | "team" | "upgrade" | "settings";
 
 interface ChatSidebarProps {
   conversations: Conversation[];
@@ -80,7 +80,6 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
 
   const navItems: { key: SidebarView; icon: any; label: string }[] = [
     { key: "chats", icon: MessageSquare, label: "Chats" },
-    { key: "history", icon: History, label: "History" },
     { key: "team", icon: Users, label: "Team" },
     { key: "upgrade", icon: Zap, label: "Upgrade" },
     { key: "settings", icon: Settings, label: "Settings" },
@@ -216,7 +215,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
       </div>
 
       {/* New Chat */}
-      {(view === "chats" || view === "history") && (
+      {view === "chats" && (
         <div className="px-3 pb-2">
           <button
             onClick={onNew}
@@ -228,7 +227,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
         </div>
       )}
 
-      {view === "chats" || view === "history" ? (
+      {view === "chats" ? (
         <>
           <div className="px-3 pb-2">
             <div className="relative">
@@ -320,6 +319,18 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
           {view === "team" && (
             <div className="space-y-2">
               <p className="text-[10px] uppercase tracking-wider text-slate-500 px-1 mb-1">Workspace</p>
+              <button
+                onClick={() => window.open("/admin", "_blank", "noopener,noreferrer")}
+                className="w-full flex items-center gap-2.5 p-2.5 rounded-lg bg-blue-500/10 border border-blue-400/25 text-left hover:bg-blue-500/15 hover:border-blue-300/40 transition-all"
+              >
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#2563EB] to-[#60A5FA] flex items-center justify-center text-white">
+                  <ShieldCheck className="w-4 h-4" />
+                </div>
+                <div className="leading-tight flex-1 min-w-0">
+                  <p className="text-xs text-white truncate">Admin Panel</p>
+                  <p className="text-[10px] text-blue-300">Approve payments & QR</p>
+                </div>
+              </button>
               {[
                 { name: "You", role: "Owner", color: "from-blue-500 to-indigo-500" },
                 { name: "AI Assistant", role: "Online", color: "from-[#3B82F6] to-[#2563EB]" },
