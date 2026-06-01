@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import ChatInterface from "@/components/ChatInterface";
+import { clearLegacyMindSparkKeys } from "@/lib/userStorage";
 
 const Index = () => {
   const [userName, setUserName] = useState<string | undefined>();
@@ -13,6 +14,7 @@ const Index = () => {
       if (!session) {
         navigate("/auth");
       } else {
+        clearLegacyMindSparkKeys();
         setUserName(session.user.user_metadata?.full_name || session.user.email || "User");
         setLoading(false);
       }
@@ -22,6 +24,7 @@ const Index = () => {
       if (!session) {
         navigate("/auth");
       } else {
+        clearLegacyMindSparkKeys();
         setUserName(session.user.user_metadata?.full_name || session.user.email || "User");
         setLoading(false);
       }
