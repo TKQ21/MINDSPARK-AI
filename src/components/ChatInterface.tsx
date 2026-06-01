@@ -21,6 +21,7 @@ import UsageBanner from "./UsageBanner";
 import ModelSelector from "./ModelSelector";
 import { loadSelectedModel, saveSelectedModel, ModelId, resolveModel } from "@/lib/models";
 import { useUserPlan } from "@/hooks/useUserPlan";
+import { clearLegacyMindSparkKeys, clearUserMindSparkCache } from "@/lib/userStorage";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
@@ -69,20 +70,25 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
 
   const usage = useUserPlan();
   const [view, setView] = useState<SidebarView>("chats");
-  const [selectedModel, setSelectedModel] = useState<ModelId>(() => loadSelectedModel());
+  const [selectedModel, setSelectedModel] = useState<ModelId>("gemini-1.5-flash");
+
+  useEffect(() => {
+    if (!userId) return;
+    setSelectedModel(loadSelectedModel(userId));
+  }, [userId]);
 
   // If user loses Pro, force back to free model silently
   useEffect(() => {
     const resolved = resolveModel(selectedModel, usage.isPro);
     if (resolved !== selectedModel) {
       setSelectedModel(resolved);
-      saveSelectedModel(resolved);
+      saveSelectedModel(resolved, userId);
     }
-  }, [usage.isPro, selectedModel]);
+  }, [usage.isPro, selectedModel, userId]);
 
   const handleModelChange = (id: ModelId) => {
     setSelectedModel(id);
-    saveSelectedModel(id);
+    saveSelectedModel(id, userId);
   };
 
   const goUpgrade = () => setView("upgrade");
@@ -109,7 +115,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) setUserId(session.user.id);
+      if (session) {
+        clearLegacyMindSparkKeys();
+        setUserId(session.user.id);
+      }
     });
   }, []);
 
@@ -172,6 +181,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   }, [input]);
 
   const handleLogout = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user?.id) clearUserMindSparkCache(user.id);
     await supabase.auth.signOut();
     navigate("/auth");
   };
