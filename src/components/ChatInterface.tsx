@@ -137,29 +137,29 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     loadConversations();
   }, [userId]);
 
+  const loadMessagesForConversation = useCallback(async (conversationId: string) => {
+    const { data } = await supabase
+      .from("messages")
+      .select("*")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: true });
+
+    const loaded = (data || []).map((m: any) => ({
+      id: m.id,
+      role: m.role as "user" | "assistant",
+      content: m.content,
+      imageUrl: m.image_url || undefined,
+      fileName: m.file_name || undefined,
+    }));
+
+    setMessagesByConv((prev) => ({ ...prev, [conversationId]: loaded }));
+    return loaded;
+  }, []);
+
   useEffect(() => {
     if (!activeConvId || messagesByConv[activeConvId]) return;
-    const loadMessages = async () => {
-      const { data } = await supabase
-        .from("messages")
-        .select("*")
-        .eq("conversation_id", activeConvId)
-        .order("created_at", { ascending: true });
-      if (data) {
-        setMessagesByConv((prev) => ({
-          ...prev,
-          [activeConvId]: data.map((m: any) => ({
-            id: m.id,
-            role: m.role as "user" | "assistant",
-            content: m.content,
-            imageUrl: m.image_url || undefined,
-            fileName: m.file_name || undefined,
-          })),
-        }));
-      }
-    };
-    loadMessages();
-  }, [activeConvId]);
+    loadMessagesForConversation(activeConvId);
+  }, [activeConvId, messagesByConv, loadMessagesForConversation]);
 
   useEffect(() => {
     if (activeConvId) {
@@ -445,7 +445,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       setMessagesByConv((prev) => ({ ...prev, [convId!]: [...(prev[convId!] || []), userMsg] }));
       await saveMessageToDB(convId, userMsg);
 
-      const allMessages = [...(messagesByConv[convId] || []), userMsg];
+      const priorMessages = messagesByConv[convId] || (activeConvId === convId ? await loadMessagesForConversation(convId) : []);
+      const allMessages = [...priorMessages, userMsg];
 
       if (!currentDocContext && documentReadError && uploadedFile && !wantsGeneratedImage) {
         const botMsg: Message = { id: crypto.randomUUID(), role: "assistant", content: documentReadError };
