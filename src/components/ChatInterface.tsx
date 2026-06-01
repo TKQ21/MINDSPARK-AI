@@ -197,6 +197,14 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     });
   };
 
+  const getFunctionHeaders = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    return {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+    };
+  };
+
   const createConversation = async (title: string): Promise<string> => {
     if (!userId) throw new Error("Not authenticated");
     const { data, error } = await supabase
@@ -248,10 +256,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       setIsParsingDoc(true);
       const resp = await fetch(PARSE_URL, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-        },
+        headers: await getFunctionHeaders(),
         body: JSON.stringify({ fileUrl, fileName }),
       });
       const data = await resp.json().catch(() => ({}));
@@ -301,10 +306,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     try {
       const res = await fetch(IMAGE_URL, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-        },
+        headers: await getFunctionHeaders(),
         body: JSON.stringify({ prompt }),
       });
       if (!res.ok) { const err = await res.json(); throw new Error(err.error || "Image generation failed"); }
@@ -333,10 +335,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
 
       const resp = await fetch(CHAT_URL, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-        },
+        headers: await getFunctionHeaders(),
         body: JSON.stringify(body),
       });
       if (!resp.ok) {
