@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { lovable } from "@/integrations/lovable/index";
 import { Sparkles, Mail, Lock, User, Eye, EyeOff, Loader2, ArrowRight, Cpu, Zap, Shield } from "lucide-react";
 import { toast } from "sonner";
+import { clearLegacyMindSparkKeys } from "@/lib/userStorage";
 
 const Auth: React.FC = () => {
   const [isLogin, setIsLogin] = useState(true);
@@ -21,6 +22,7 @@ const Auth: React.FC = () => {
       if (isLogin) {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
+        clearLegacyMindSparkKeys();
         toast.success("Welcome back");
         navigate("/");
       } else {
@@ -49,6 +51,7 @@ const Auth: React.FC = () => {
         redirect_uri: window.location.origin,
       });
       if (error) throw error;
+      clearLegacyMindSparkKeys();
     } catch (err: any) {
       toast.error(err.message);
       setLoading(false);
