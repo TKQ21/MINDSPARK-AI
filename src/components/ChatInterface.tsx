@@ -7,7 +7,7 @@ import {
   CheckCircle,
   Mic,
   MicOff,
-  ChevronDown,
+  Menu,
   Sparkles,
   PanelRight,
 } from "lucide-react";
@@ -50,8 +50,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   const [messagesByConv, setMessagesByConv] = useState<Record<string, Message[]>>({});
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [insightsOpen, setInsightsOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 768);
+  const [insightsOpen, setInsightsOpen] = useState(() => window.innerWidth >= 1024);
   const [uploadedFile, setUploadedFile] = useState<{ name: string; url: string; isImage: boolean } | null>(null);
   const [documentContext, setDocumentContext] = useState<string | null>(null);
   const [documentContexts, setDocumentContexts] = useState<Record<string, string>>({});
@@ -63,8 +63,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isListening, setIsListening] = useState(false);
-  const [voiceLang, setVoiceLang] = useState<string>("auto");
-  const [detectedLang, setDetectedLang] = useState<string | null>(null);
   const recognitionRef = useRef<any>(null);
   const navigate = useNavigate();
 
