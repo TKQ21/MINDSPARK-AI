@@ -12,6 +12,7 @@ export interface UserPlanState {
   userId: string | null;
   plan: "free" | "pro";
   status: PlanStatus;
+  tokensUsed: number;
   questionCount: number;
   imageCount: number;
   docCount: number;
@@ -28,6 +29,7 @@ const defaultState: UserPlanState = {
   userId: null,
   plan: "free",
   status: "free",
+  tokensUsed: 0,
   questionCount: 0,
   imageCount: 0,
   docCount: 0,
@@ -56,6 +58,7 @@ function writeCache(state: UserPlanState) {
     if (usageKey) {
       localStorage.setItem(usageKey, JSON.stringify({
         questionCount: state.questionCount,
+        tokensUsed: state.tokensUsed,
         imageCount: state.imageCount,
         docCount: state.docCount,
         resetAt: state.resetAt,
@@ -74,6 +77,7 @@ function mapPlanRow(row: any, pending: boolean, userId: string): UserPlanState {
     userId,
     plan: isPro ? "pro" : "free",
     status: isPro ? "pro" : pending ? "pending" : "free",
+    tokensUsed: Number(row?.tokens_used || 0),
     questionCount: Number(row?.question_count || 0),
     imageCount: Number(row?.image_gen_count || 0),
     docCount: Number(row?.doc_upload_count || 0),
@@ -84,6 +88,9 @@ function mapPlanRow(row: any, pending: boolean, userId: string): UserPlanState {
 }
 
 async function ensurePlanRow(userId: string, email?: string | null) {
+  const rpcRes = await (supabase as any).rpc("ensure_current_user_plan");
+  if (!rpcRes.error && rpcRes.data) return rpcRes.data;
+
   const resetAt = new Date(Date.now() + DAY_MS).toISOString();
   const { data, error } = await supabase
     .from("user_plans")
