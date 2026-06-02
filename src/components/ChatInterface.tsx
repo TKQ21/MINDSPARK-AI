@@ -493,9 +493,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     if (isListening) { recognitionRef.current?.stop(); setIsListening(false); return; }
 
     const recognition = new SpeechRecognition();
-    const lang = voiceLang === "auto" ? (navigator.language || "en-US") : voiceLang;
+    const lang = navigator.language || "en-US";
     recognition.lang = lang;
-    setDetectedLang(lang);
     recognition.interimResults = true;
     recognition.continuous = true;
     recognitionRef.current = recognition;
@@ -748,26 +747,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
                 >
                   {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                 </button>
-                <select
-                  value={voiceLang}
-                  onChange={(e) => setVoiceLang(e.target.value)}
-                  className="text-[10px] bg-[#0d1117] border border-white/10 rounded-md text-slate-200 px-1.5 py-1 outline-none hover:bg-[#161b22] focus:border-blue-400/40 [&>option]:bg-[#0d1117] [&>option]:text-[#e6edf3]"
-                  title="Voice language"
-                  style={{ colorScheme: "dark" }}
-                >
-                  <option value="auto">Auto</option>
-                  <option value="en-US">English</option>
-                  <option value="hi-IN">हिन्दी</option>
-                  <option value="es-ES">Español</option>
-                  <option value="fr-FR">Français</option>
-                  <option value="de-DE">Deutsch</option>
-                  <option value="ar-SA">العربية</option>
-                  <option value="ja-JP">日本語</option>
-                  <option value="zh-CN">中文</option>
-                </select>
-                {detectedLang && isListening && (
+                {isListening && (
                   <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-200 border border-blue-400/20">
-                    {detectedLang}
+                    {lang}
                   </span>
                 )}
 
