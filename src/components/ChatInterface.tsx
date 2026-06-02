@@ -270,12 +270,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     }
   };
 
-  const getFreshUsage = async () => {
+  const getFreshUsage = async (): Promise<any> => {
     const fresh = await usage.refresh(userId || undefined);
     return fresh || usage;
   };
 
-  const resetCountdown = (planState = usage) => `${planState.hoursLeft}h ${planState.minutesLeft}m`;
+  const resetCountdown = (planState: any = usage) => {
+    const resetAt = Number(planState.resetAt || usage.resetAt || Date.now());
+    const msLeft = Math.max(0, resetAt - Date.now());
+    const hours = Math.floor(msLeft / 3_600_000);
+    const minutes = Math.floor((msLeft % 3_600_000) / 60_000);
+    return `${hours}h ${minutes}m`;
+  };
 
   const handleFileUpload = async (file: File) => {
     if (file.size > MAX_FILE_MB * 1024 * 1024) {
@@ -283,7 +289,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       return;
     }
     const freshUsage = await getFreshUsage();
-    if (!freshUsage.isPro && freshUsage.docCount >= freshUsage.docLimit) {
+    const freshIsPro = freshUsage.plan === "pro" || freshUsage.isPro;
+    if (!freshIsPro && Number(freshUsage.docCount || 0) >= usage.docLimit) {
       toast.info(`You've used all 3 free document uploads for today. Resets in ${resetCountdown(freshUsage)}.`);
       goUpgrade();
       return;
