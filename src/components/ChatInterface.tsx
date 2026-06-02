@@ -402,7 +402,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       if (assistantSoFar) {
         await saveMessageToDB(convId, { id: botId, role: "assistant", content: assistantSoFar });
         if (!usage.isPro) {
-          await usage.addQuestion();
+          await usage.addQuestion((allMessages[allMessages.length - 1]?.content?.length || 0) + assistantSoFar.length);
         }
       }
     } catch (e: any) {
