@@ -417,14 +417,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     if (!messageText || isLoading) return;
 
     const wantsImg = isImageRequest(messageText);
-    if (!usage.isPro) {
-      if (wantsImg && usage.imagesExceeded) {
-        toast.info("You've used all 5 free image generations for today. Upgrade to Pro for unlimited.");
+    const freshUsage = await getFreshUsage();
+    const freshIsPro = freshUsage.plan === "pro" || freshUsage.isPro;
+    if (!freshIsPro) {
+      if (wantsImg && Number(freshUsage.imageCount || 0) >= usage.imageLimit) {
+        toast.info(`You've used all 5 free image generations for today. Resets in ${resetCountdown(freshUsage)}.`);
         goUpgrade();
         return;
       }
-      if (!wantsImg && usage.questionsExceeded) {
-        toast.info("You've used all 10 free questions for today. Upgrade to Pro for unlimited.");
+      if (!wantsImg && Number(freshUsage.questionCount || 0) >= usage.questionLimit) {
+        toast.info(`You've used all 10 free questions for today. Resets in ${resetCountdown(freshUsage)}.`);
         goUpgrade();
         return;
       }
