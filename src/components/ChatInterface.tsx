@@ -7,7 +7,7 @@ import {
   CheckCircle,
   Mic,
   MicOff,
-  ChevronDown,
+  Menu,
   Sparkles,
   PanelRight,
 } from "lucide-react";
@@ -50,8 +50,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   const [messagesByConv, setMessagesByConv] = useState<Record<string, Message[]>>({});
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [insightsOpen, setInsightsOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 768);
+  const [insightsOpen, setInsightsOpen] = useState(() => window.innerWidth >= 1024);
   const [uploadedFile, setUploadedFile] = useState<{ name: string; url: string; isImage: boolean } | null>(null);
   const [documentContext, setDocumentContext] = useState<string | null>(null);
   const [documentContexts, setDocumentContexts] = useState<Record<string, string>>({});
@@ -63,8 +63,6 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isListening, setIsListening] = useState(false);
-  const [voiceLang, setVoiceLang] = useState<string>("auto");
-  const [detectedLang, setDetectedLang] = useState<string | null>(null);
   const recognitionRef = useRef<any>(null);
   const navigate = useNavigate();
 
@@ -153,8 +151,17 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     }));
 
     setMessagesByConv((prev) => ({ ...prev, [conversationId]: loaded }));
+    const docRes = await (supabase as any)
+      .from("conversation_documents")
+      .select("file_name,extracted_text")
+      .eq("conversation_id", conversationId)
+      .maybeSingle();
+    if (docRes.data?.extracted_text) {
+      setLatestDocumentContext(conversationId, docRes.data.extracted_text);
+      setUploadedFile((current) => current || { name: docRes.data.file_name || "Recent document", url: "", isImage: false });
+    }
     return loaded;
-  }, []);
+  }, [setLatestDocumentContext]);
 
   useEffect(() => {
     if (!activeConvId || messagesByConv[activeConvId]) return;
@@ -195,6 +202,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       image_url: msg.imageUrl || null,
       file_name: msg.fileName || null,
     });
+  };
+
+  const saveDocumentContextToDB = async (convId: string, fileName: string, extractedText: string) => {
+    if (!userId || !extractedText.trim()) return;
+    await (supabase as any).from("conversation_documents").upsert({
+      conversation_id: convId,
+      user_id: userId,
+      file_name: fileName || "Uploaded document",
+      extracted_text: extractedText,
+    }, { onConflict: "conversation_id" });
   };
 
   const getFunctionHeaders = async () => {
@@ -272,13 +289,28 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     }
   };
 
+  const getFreshUsage = async (): Promise<any> => {
+    const fresh = await usage.refresh(userId || undefined);
+    return fresh || usage;
+  };
+
+  const resetCountdown = (planState: any = usage) => {
+    const resetAt = Number(planState.resetAt || usage.resetAt || Date.now());
+    const msLeft = Math.max(0, resetAt - Date.now());
+    const hours = Math.floor(msLeft / 3_600_000);
+    const minutes = Math.floor((msLeft % 3_600_000) / 60_000);
+    return `${hours}h ${minutes}m`;
+  };
+
   const handleFileUpload = async (file: File) => {
     if (file.size > MAX_FILE_MB * 1024 * 1024) {
       toast.error(`File too large. Max ${MAX_FILE_MB}MB.`);
       return;
     }
-    if (usage.docsExceeded) {
-      toast.info("You've used all 3 free document uploads for today.");
+    const freshUsage = await getFreshUsage();
+    const freshIsPro = freshUsage.plan === "pro" || freshUsage.isPro;
+    if (!freshIsPro && Number(freshUsage.docCount || 0) >= usage.docLimit) {
+      toast.info(`You've used all 3 free document uploads for today. Resets in ${resetCountdown(freshUsage)}.`);
       goUpgrade();
       return;
     }
@@ -289,11 +321,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     const { data: publicUrl } = supabase.storage.from("chat-uploads").getPublicUrl(filePath);
     const isImage = file.type.startsWith("image/");
     setUploadedFile({ name: file.name, url: publicUrl.publicUrl, isImage });
+    if (!freshIsPro) await usage.addDoc();
 
     const { text: extractedText, error: parseError } = await parseDocument(publicUrl.publicUrl, file.name);
     if (extractedText) {
       setLatestDocumentContext(activeConvId, extractedText);
-      if (!usage.isPro) await usage.addDoc();
+      if (activeConvId) await saveDocumentContextToDB(activeConvId, file.name, extractedText);
       toast.success("📄 File ready. Ask me anything about it.");
       return;
     }
@@ -389,7 +422,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       if (assistantSoFar) {
         await saveMessageToDB(convId, { id: botId, role: "assistant", content: assistantSoFar });
         if (!usage.isPro) {
-          await usage.addQuestion();
+          await usage.addQuestion((allMessages[allMessages.length - 1]?.content?.length || 0) + assistantSoFar.length);
         }
       }
     } catch (e: any) {
@@ -404,14 +437,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     if (!messageText || isLoading) return;
 
     const wantsImg = isImageRequest(messageText);
-    if (!usage.isPro) {
-      if (wantsImg && usage.imagesExceeded) {
-        toast.info("You've used all 5 free image generations for today. Upgrade to Pro for unlimited.");
+    const freshUsage = await getFreshUsage();
+    const freshIsPro = freshUsage.plan === "pro" || freshUsage.isPro;
+    if (!freshIsPro) {
+      if (wantsImg && Number(freshUsage.imageCount || 0) >= usage.imageLimit) {
+        toast.info(`You've used all 5 free image generations for today. Resets in ${resetCountdown(freshUsage)}.`);
         goUpgrade();
         return;
       }
-      if (!wantsImg && usage.questionsExceeded) {
-        toast.info("You've used all 10 free questions for today. Upgrade to Pro for unlimited.");
+      if (!wantsImg && Number(freshUsage.questionCount || 0) >= usage.questionLimit) {
+        toast.info(`You've used all 10 free questions for today. Resets in ${resetCountdown(freshUsage)}.`);
         goUpgrade();
         return;
       }
@@ -431,6 +466,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       if (!currentDocContext && pendingDocumentContext) {
         currentDocContext = pendingDocumentContext;
         setDocumentContexts((prev) => ({ ...prev, [convId!]: pendingDocumentContext }));
+        if (uploadedFile) await saveDocumentContextToDB(convId, uploadedFile.name, pendingDocumentContext);
         setPendingDocumentContext(null);
       }
       if (currentDocContext) setDocumentContext(currentDocContext);
@@ -480,9 +516,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     if (isListening) { recognitionRef.current?.stop(); setIsListening(false); return; }
 
     const recognition = new SpeechRecognition();
-    const lang = voiceLang === "auto" ? (navigator.language || "en-US") : voiceLang;
+    const lang = navigator.language || "en-US";
     recognition.lang = lang;
-    setDetectedLang(lang);
     recognition.interimResults = true;
     recognition.continuous = true;
     recognitionRef.current = recognition;
@@ -538,6 +573,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
           setActiveConvId(id);
           setUploadedFile(null);
           setDocumentReadError(null);
+          if (window.innerWidth < 768) setSidebarOpen(false);
         }}
         onNew={() => {
           setActiveConvId(null);
@@ -556,11 +592,25 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         view={view}
         onViewChange={setView}
       />
+      {sidebarOpen && (
+        <button
+          aria-label="Close sidebar"
+          className="fixed inset-0 z-30 bg-black/45 backdrop-blur-sm md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
 
       <div className="flex-1 flex flex-col relative z-10 min-w-0">
         {/* Header */}
         <header className="flex items-center gap-3 px-5 py-3 border-b border-white/5 bg-white/[0.02] backdrop-blur-xl">
           <div className="flex items-center gap-2 min-w-0 flex-1">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="md:hidden w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-white/[0.06] transition-all"
+              title="Open menu"
+            >
+              <Menu className="w-4 h-4" />
+            </button>
             <Sparkles className="w-4 h-4 text-blue-300 flex-shrink-0" />
             <h2 className="text-sm font-semibold text-white truncate">{activeTitle}</h2>
             {documentContext && !documentReadError && (
@@ -735,26 +785,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
                 >
                   {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                 </button>
-                <select
-                  value={voiceLang}
-                  onChange={(e) => setVoiceLang(e.target.value)}
-                  className="text-[10px] bg-[#0d1117] border border-white/10 rounded-md text-slate-200 px-1.5 py-1 outline-none hover:bg-[#161b22] focus:border-blue-400/40 [&>option]:bg-[#0d1117] [&>option]:text-[#e6edf3]"
-                  title="Voice language"
-                  style={{ colorScheme: "dark" }}
-                >
-                  <option value="auto">Auto</option>
-                  <option value="en-US">English</option>
-                  <option value="hi-IN">हिन्दी</option>
-                  <option value="es-ES">Español</option>
-                  <option value="fr-FR">Français</option>
-                  <option value="de-DE">Deutsch</option>
-                  <option value="ar-SA">العربية</option>
-                  <option value="ja-JP">日本語</option>
-                  <option value="zh-CN">中文</option>
-                </select>
-                {detectedLang && isListening && (
+                {isListening && (
                   <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-200 border border-blue-400/20">
-                    {detectedLang}
+                    {navigator.language || "Auto"}
                   </span>
                 )}
 

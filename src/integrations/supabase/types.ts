@@ -41,6 +41,36 @@ export type Database = {
         }
         Relationships: []
       }
+      conversation_documents: {
+        Row: {
+          conversation_id: string
+          created_at: string
+          extracted_text: string
+          file_name: string
+          id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          conversation_id: string
+          created_at?: string
+          extracted_text: string
+          file_name: string
+          id?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          conversation_id?: string
+          created_at?: string
+          extracted_text?: string
+          file_name?: string
+          id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       conversations: {
         Row: {
           created_at: string
@@ -213,7 +243,54 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      ensure_current_user_plan: {
+        Args: never
+        Returns: {
+          created_at: string
+          doc_upload_count: number
+          email: string | null
+          id: string
+          image_gen_count: number
+          plan: string
+          pro_activated_at: string | null
+          pro_expires_at: string | null
+          question_count: number
+          tokens_used: number
+          updated_at: string
+          usage_reset_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "user_plans"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
+      increment_current_user_usage: {
+        Args: { token_delta?: number; usage_kind: string }
+        Returns: {
+          created_at: string
+          doc_upload_count: number
+          email: string | null
+          id: string
+          image_gen_count: number
+          plan: string
+          pro_activated_at: string | null
+          pro_expires_at: string | null
+          question_count: number
+          tokens_used: number
+          updated_at: string
+          usage_reset_at: string
+          user_id: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "user_plans"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
     }
     Enums: {
       [_ in never]: never
