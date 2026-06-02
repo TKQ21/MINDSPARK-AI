@@ -592,11 +592,25 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         view={view}
         onViewChange={setView}
       />
+      {sidebarOpen && (
+        <button
+          aria-label="Close sidebar"
+          className="fixed inset-0 z-30 bg-black/45 backdrop-blur-sm md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
 
       <div className="flex-1 flex flex-col relative z-10 min-w-0">
         {/* Header */}
         <header className="flex items-center gap-3 px-5 py-3 border-b border-white/5 bg-white/[0.02] backdrop-blur-xl">
           <div className="flex items-center gap-2 min-w-0 flex-1">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="md:hidden w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:text-white hover:bg-white/[0.06] transition-all"
+              title="Open menu"
+            >
+              <Menu className="w-4 h-4" />
+            </button>
             <Sparkles className="w-4 h-4 text-blue-300 flex-shrink-0" />
             <h2 className="text-sm font-semibold text-white truncate">{activeTitle}</h2>
             {documentContext && !documentReadError && (
