@@ -749,7 +749,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
                 </button>
                 {isListening && (
                   <span className="text-[9px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-200 border border-blue-400/20">
-                    {lang}
+                    {navigator.language || "Auto"}
                   </span>
                 )}
 
