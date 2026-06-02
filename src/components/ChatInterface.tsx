@@ -151,8 +151,17 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     }));
 
     setMessagesByConv((prev) => ({ ...prev, [conversationId]: loaded }));
+    const docRes = await (supabase as any)
+      .from("conversation_documents")
+      .select("file_name,extracted_text")
+      .eq("conversation_id", conversationId)
+      .maybeSingle();
+    if (docRes.data?.extracted_text) {
+      setLatestDocumentContext(conversationId, docRes.data.extracted_text);
+      setUploadedFile((current) => current || { name: docRes.data.file_name || "Recent document", url: "", isImage: false });
+    }
     return loaded;
-  }, []);
+  }, [setLatestDocumentContext]);
 
   useEffect(() => {
     if (!activeConvId || messagesByConv[activeConvId]) return;
@@ -193,6 +202,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       image_url: msg.imageUrl || null,
       file_name: msg.fileName || null,
     });
+  };
+
+  const saveDocumentContextToDB = async (convId: string, fileName: string, extractedText: string) => {
+    if (!userId || !extractedText.trim()) return;
+    await (supabase as any).from("conversation_documents").upsert({
+      conversation_id: convId,
+      user_id: userId,
+      file_name: fileName || "Uploaded document",
+      extracted_text: extractedText,
+    }, { onConflict: "conversation_id" });
   };
 
   const getFunctionHeaders = async () => {
