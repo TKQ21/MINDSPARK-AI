@@ -89,7 +89,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
   if (!isOpen) {
     return (
       <aside
-        className="relative z-30 flex flex-col items-center w-[64px] h-full py-4 border-r"
+        className="hidden md:flex relative z-30 flex-col items-center w-[64px] h-full py-4 border-r"
         style={{
           background:
             "linear-gradient(180deg, hsl(230 30% 7% / 0.92) 0%, hsl(230 35% 5% / 0.96) 100%)",
@@ -154,7 +154,7 @@ const ChatSidebar: React.FC<ChatSidebarProps> = ({
       initial={{ width: 64, opacity: 0.6 }}
       animate={{ width: 280, opacity: 1 }}
       transition={{ type: "spring", damping: 28, stiffness: 280 }}
-      className="relative z-30 flex flex-col h-full border-r overflow-hidden"
+      className="fixed md:relative inset-y-0 left-0 z-40 flex flex-col h-full border-r overflow-hidden shadow-2xl md:shadow-none w-[min(86vw,280px)] md:w-auto"
       style={{
         background:
           "linear-gradient(180deg, hsl(230 30% 7% / 0.94) 0%, hsl(230 35% 5% / 0.97) 100%)",
