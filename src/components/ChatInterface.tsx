@@ -302,11 +302,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     const { data: publicUrl } = supabase.storage.from("chat-uploads").getPublicUrl(filePath);
     const isImage = file.type.startsWith("image/");
     setUploadedFile({ name: file.name, url: publicUrl.publicUrl, isImage });
+    if (!freshIsPro) await usage.addDoc();
 
     const { text: extractedText, error: parseError } = await parseDocument(publicUrl.publicUrl, file.name);
     if (extractedText) {
       setLatestDocumentContext(activeConvId, extractedText);
-      if (!usage.isPro) await usage.addDoc();
       toast.success("📄 File ready. Ask me anything about it.");
       return;
     }
