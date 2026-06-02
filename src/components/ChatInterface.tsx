@@ -270,13 +270,21 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     }
   };
 
+  const getFreshUsage = async () => {
+    const fresh = await usage.refresh(userId || undefined);
+    return fresh || usage;
+  };
+
+  const resetCountdown = (planState = usage) => `${planState.hoursLeft}h ${planState.minutesLeft}m`;
+
   const handleFileUpload = async (file: File) => {
     if (file.size > MAX_FILE_MB * 1024 * 1024) {
       toast.error(`File too large. Max ${MAX_FILE_MB}MB.`);
       return;
     }
-    if (usage.docsExceeded) {
-      toast.info("You've used all 3 free document uploads for today.");
+    const freshUsage = await getFreshUsage();
+    if (!freshUsage.isPro && freshUsage.docCount >= freshUsage.docLimit) {
+      toast.info(`You've used all 3 free document uploads for today. Resets in ${resetCountdown(freshUsage)}.`);
       goUpgrade();
       return;
     }
