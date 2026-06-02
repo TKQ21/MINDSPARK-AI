@@ -326,6 +326,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     const { text: extractedText, error: parseError } = await parseDocument(publicUrl.publicUrl, file.name);
     if (extractedText) {
       setLatestDocumentContext(activeConvId, extractedText);
+      if (activeConvId) await saveDocumentContextToDB(activeConvId, file.name, extractedText);
       toast.success("📄 File ready. Ask me anything about it.");
       return;
     }
@@ -465,6 +466,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       if (!currentDocContext && pendingDocumentContext) {
         currentDocContext = pendingDocumentContext;
         setDocumentContexts((prev) => ({ ...prev, [convId!]: pendingDocumentContext }));
+        if (uploadedFile) await saveDocumentContextToDB(convId, uploadedFile.name, pendingDocumentContext);
         setPendingDocumentContext(null);
       }
       if (currentDocContext) setDocumentContext(currentDocContext);
@@ -571,6 +573,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
           setActiveConvId(id);
           setUploadedFile(null);
           setDocumentReadError(null);
+          if (window.innerWidth < 768) setSidebarOpen(false);
         }}
         onNew={() => {
           setActiveConvId(null);
