@@ -126,7 +126,7 @@ export function useUserPlan() {
 
     if (!user?.id) {
       setState({ ...defaultState, loading: false });
-      return;
+      return null;
     }
 
     clearLegacyMindSparkKeys();
@@ -134,7 +134,7 @@ export function useUserPlan() {
     if (cached) setState((s) => ({ ...s, ...cached, userId: user.id, loading: true }));
 
     const [planRes, reqRes] = await Promise.all([
-      supabase.from("user_plans").select("*").eq("user_id", user.id).maybeSingle(),
+      (supabase as any).rpc("ensure_current_user_plan"),
       supabase
         .from("payment_requests")
         .select("status,submitted_at")
@@ -167,6 +167,7 @@ export function useUserPlan() {
     const next = mapPlanRow(row, reqRes.data?.status === "pending", user.id);
     writeCache(next);
     setState(next);
+    return next;
   }, []);
 
   useEffect(() => {
@@ -190,30 +191,22 @@ export function useUserPlan() {
     };
   }, [loadUserPlan]);
 
-  const increment = useCallback(async (field: "question_count" | "image_gen_count" | "doc_upload_count") => {
+  const increment = useCallback(async (field: "question_count" | "image_gen_count" | "doc_upload_count", tokenDelta = 0) => {
     if (!state.userId || state.plan === "pro") return;
 
     const localNext = { ...state };
     if (field === "question_count") localNext.questionCount += 1;
     if (field === "image_gen_count") localNext.imageCount += 1;
     if (field === "doc_upload_count") localNext.docCount += 1;
+    if (field === "question_count") localNext.tokensUsed += Math.max(0, tokenDelta);
     setState(localNext);
     writeCache(localNext);
 
-    const updatePayload: Record<string, number> = {};
-    updatePayload[field] = field === "question_count"
-      ? localNext.questionCount
-      : field === "image_gen_count"
-      ? localNext.imageCount
-      : localNext.docCount;
-    if (field === "question_count") updatePayload.tokens_used = localNext.questionCount;
-
-    const { data, error } = await supabase
-      .from("user_plans")
-      .update(updatePayload as any)
-      .eq("user_id", state.userId)
-      .select("*")
-      .single();
+    const usageKind = field === "question_count" ? "question" : field === "image_gen_count" ? "image" : "doc";
+    const { data, error } = await (supabase as any).rpc("increment_current_user_usage", {
+      usage_kind: usageKind,
+      token_delta: tokenDelta,
+    });
 
     if (!error && data) {
       const synced = mapPlanRow(data, state.status === "pending", state.userId);
@@ -231,7 +224,7 @@ export function useUserPlan() {
   return {
     ...state,
     isPro,
-    addQuestion: () => increment("question_count"),
+    addQuestion: (tokenDelta = 0) => increment("question_count", tokenDelta),
     addImage: () => increment("image_gen_count"),
     addDoc: () => increment("doc_upload_count"),
     questionsExceeded,
