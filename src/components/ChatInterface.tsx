@@ -382,47 +382,76 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let textBuffer = "";
-      let assistantSoFar = "";
+      let rawSoFar = "";
+      let displayedSoFar = "";
       const botId = crypto.randomUUID();
       let streamDone = false;
+      let networkDone = false;
 
-      while (!streamDone) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        textBuffer += decoder.decode(value, { stream: true });
-        let newlineIndex: number;
-        while ((newlineIndex = textBuffer.indexOf("\n")) !== -1) {
-          let line = textBuffer.slice(0, newlineIndex);
-          textBuffer = textBuffer.slice(newlineIndex + 1);
-          if (line.endsWith("\r")) line = line.slice(0, -1);
-          if (line.startsWith(":") || line.trim() === "") continue;
-          if (!line.startsWith("data: ")) continue;
-          const jsonStr = line.slice(6).trim();
-          if (jsonStr === "[DONE]") { streamDone = true; break; }
-          try {
-            const parsed = JSON.parse(jsonStr);
-            const content = parsed.choices?.[0]?.delta?.content as string | undefined;
-            if (content) {
-              assistantSoFar += content;
-              setMessagesByConv((prev) => {
-                const msgs = prev[convId] || [];
-                const lastMsg = msgs[msgs.length - 1];
-                if (lastMsg?.id === botId) {
-                  return { ...prev, [convId]: msgs.map((m) => m.id === botId ? { ...m, content: assistantSoFar } : m) };
-                }
-                return { ...prev, [convId]: [...msgs, { id: botId, role: "assistant", content: assistantSoFar }] };
-              });
+      // Typewriter: reveal a few characters at a time so users see word-by-word
+      // generation regardless of how the upstream model chunks tokens.
+      const REVEAL_CHARS_PER_TICK = 3;
+      const TICK_MS = 18;
+      const flushDisplay = () => {
+        setMessagesByConv((prev) => {
+          const msgs = prev[convId] || [];
+          const lastMsg = msgs[msgs.length - 1];
+          if (lastMsg?.id === botId) {
+            return { ...prev, [convId]: msgs.map((m) => m.id === botId ? { ...m, content: displayedSoFar } : m) };
+          }
+          return { ...prev, [convId]: [...msgs, { id: botId, role: "assistant", content: displayedSoFar }] };
+        });
+      };
+
+      const typer = setInterval(() => {
+        if (displayedSoFar.length < rawSoFar.length) {
+          const next = Math.min(rawSoFar.length, displayedSoFar.length + REVEAL_CHARS_PER_TICK);
+          displayedSoFar = rawSoFar.slice(0, next);
+          flushDisplay();
+        }
+      }, TICK_MS);
+
+      try {
+        while (!streamDone) {
+          const { done, value } = await reader.read();
+          if (done) { networkDone = true; break; }
+          textBuffer += decoder.decode(value, { stream: true });
+          let newlineIndex: number;
+          while ((newlineIndex = textBuffer.indexOf("\n")) !== -1) {
+            let line = textBuffer.slice(0, newlineIndex);
+            textBuffer = textBuffer.slice(newlineIndex + 1);
+            if (line.endsWith("\r")) line = line.slice(0, -1);
+            if (line.startsWith(":") || line.trim() === "") continue;
+            if (!line.startsWith("data: ")) continue;
+            const jsonStr = line.slice(6).trim();
+            if (jsonStr === "[DONE]") { streamDone = true; break; }
+            try {
+              const parsed = JSON.parse(jsonStr);
+              const content = parsed.choices?.[0]?.delta?.content as string | undefined;
+              if (content) rawSoFar += content;
+            } catch {
+              textBuffer = line + "\n" + textBuffer;
+              break;
             }
-          } catch {
-            textBuffer = line + "\n" + textBuffer;
-            break;
           }
         }
+      } finally {
+        // Wait for typer to catch up so the user sees the full message
+        while (displayedSoFar.length < rawSoFar.length) {
+          await new Promise((r) => setTimeout(r, TICK_MS));
+        }
+        clearInterval(typer);
+        if (rawSoFar && displayedSoFar !== rawSoFar) {
+          displayedSoFar = rawSoFar;
+          flushDisplay();
+        }
       }
-      if (assistantSoFar) {
-        await saveMessageToDB(convId, { id: botId, role: "assistant", content: assistantSoFar });
+
+      void networkDone;
+      if (rawSoFar) {
+        await saveMessageToDB(convId, { id: botId, role: "assistant", content: rawSoFar });
         if (!usage.isPro) {
-          await usage.addQuestion((allMessages[allMessages.length - 1]?.content?.length || 0) + assistantSoFar.length);
+          await usage.addQuestion((allMessages[allMessages.length - 1]?.content?.length || 0) + rawSoFar.length);
         }
       }
     } catch (e: any) {
