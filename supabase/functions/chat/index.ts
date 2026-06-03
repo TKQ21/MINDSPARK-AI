@@ -213,8 +213,8 @@ function pickRelevantChunks(
     if (selected.length >= TOP_K) break;
   }
 
-  if (!selected.length && (genericDocumentRequest || semantic.wantsTable)) {
-    return chunks.slice(0, 8).map((chunk, index) => ({ chunk, index, score: 1 }));
+  if (!selected.length) {
+    return chunks.slice(0, 12).map((chunk, index) => ({ chunk, index, score: 1 }));
   }
 
   return selected.sort((a, b) => a.index - b.index);
@@ -396,9 +396,11 @@ serve(async (req) => {
 
     if (hasDocContext) {
       const latestQuestion = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
-      const semantic = LOVABLE_API_KEY
-        ? await semanticQueryAnalysis(latestQuestion, LOVABLE_API_KEY)
-        : { keywords: [], expandedQueries: [], wantsTable: false };
+      const semantic = {
+        keywords: getQueryTerms(latestQuestion),
+        expandedQueries: expandQuery(latestQuestion),
+        wantsTable: /table|list|subjects?|papers?|topics?|marks?|syllabus|details?|data|chart|figure/i.test(latestQuestion),
+      };
       const relevantChunks = pickRelevantChunks(documentContext, latestQuestion, semantic);
 
       if (!relevantChunks.length) {
@@ -458,6 +460,7 @@ serve(async (req) => {
         model: geminiGatewayId(model),
         messages: apiMessages,
         temperature: hasDocContext ? 0 : 0.7,
+        max_tokens: hasDocContext ? 4096 : 2048,
         stream: true,
       }),
     });

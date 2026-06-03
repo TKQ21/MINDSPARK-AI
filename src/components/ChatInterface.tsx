@@ -388,10 +388,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       let streamDone = false;
       let networkDone = false;
 
-      // Typewriter: reveal a few characters at a time so users see word-by-word
-      // generation regardless of how the upstream model chunks tokens.
-      const REVEAL_CHARS_PER_TICK = 3;
-      const TICK_MS = 18;
+      // Fast typewriter: keep the ChatGPT-like live feel without making users wait.
+      const REVEAL_CHARS_PER_TICK = 12;
+      const TICK_MS = 10;
       const flushDisplay = () => {
         setMessagesByConv((prev) => {
           const msgs = prev[convId] || [];

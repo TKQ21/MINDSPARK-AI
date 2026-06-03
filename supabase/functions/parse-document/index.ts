@@ -1,9 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
-import * as pdfjsLib from "https://esm.sh/pdfjs-dist@3.11.174/legacy/build/pdf.mjs";
-// Point worker to a CDN that actually serves the file so pdfjs's "fake worker" setup succeeds.
-(pdfjsLib as any).GlobalWorkerOptions.workerSrc =
-  "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/legacy/build/pdf.worker.min.js";
+import { getDocument } from "https://esm.sh/pdfjs-serverless@1.2.3";
 import JSZip from "https://esm.sh/jszip@3.10.1";
 
 const corsHeaders = {
@@ -56,7 +53,7 @@ function extractBinaryStrings(bytes: Uint8Array) {
 }
 
 async function parsePdf(bytes: Uint8Array) {
-  const loadingTask = (pdfjsLib as any).getDocument({ data: bytes, disableWorker: true, useSystemFonts: true, isEvalSupported: false });
+  const loadingTask = getDocument({ data: bytes, useSystemFonts: true, isEvalSupported: false });
   const pdf = await loadingTask.promise;
   const pages: string[] = [];
 
