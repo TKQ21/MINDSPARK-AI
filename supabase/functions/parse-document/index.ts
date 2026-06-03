@@ -56,7 +56,7 @@ function extractBinaryStrings(bytes: Uint8Array) {
 }
 
 async function parsePdf(bytes: Uint8Array) {
-  const loadingTask = (pdfjsLib as any).getDocument({ data: bytes, disableWorker: true, useSystemFonts: true });
+  const loadingTask = (pdfjsLib as any).getDocument({ data: bytes, useSystemFonts: true, isEvalSupported: false });
   const pdf = await loadingTask.promise;
   const pages: string[] = [];
 
