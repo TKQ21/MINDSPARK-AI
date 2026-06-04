@@ -226,6 +226,108 @@ function buildRetrievedContext(chunks: Array<{ chunk: string; index: number; sco
     .join("\n\n---\n\n");
 }
 
+const FULL_DOCUMENT_CONTEXT_LIMIT = 100_000;
+
+function buildFullDocumentContext(documentContext: string): string {
+  return `### Full Uploaded Document\n${documentContext}`;
+}
+
+function extractMeaningfulNumbers(answer: string): string[] {
+  const answerWithoutSources = answer.split(/📌\s*Source:/i)[0];
+  const matches = answerWithoutSources.match(/(?:[$₹€£]\s*)?\b\d{1,3}(?:,\d{3})*(?:\.\d+)?%?\b|\b\d+(?:\.\d+)?%/g) || [];
+  return [...new Set(matches.map((n) => n.trim()).filter((n) => /[%.,]/.test(n) || Number(n.replace(/[^\d.-]/g, "")) >= 10))];
+}
+
+function numberAppearsInDocument(value: string, documentContext: string): boolean {
+  const compactDoc = documentContext.replace(/\s+/g, "");
+  const variants = [value, value.replace(/,/g, ""), value.replace(/[^\d.%-]/g, "")].filter(Boolean);
+  return variants.some((variant) => documentContext.includes(variant) || compactDoc.includes(variant.replace(/\s+/g, "")));
+}
+
+function findSourceExcerpt(documentContext: string, numbers: string[]): string | null {
+  const lines = documentContext.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  for (const number of numbers) {
+    const variants = [number, number.replace(/,/g, ""), number.replace(/[^\d.%-]/g, "")].filter(Boolean);
+    const line = lines.find((candidate) => variants.some((variant) => candidate.includes(variant)));
+    if (!line) continue;
+    return line.length > 420 ? `${line.slice(0, 417)}...` : line;
+  }
+  return null;
+}
+
+function buildDocumentVerificationNote(answer: string, documentContext: string): string {
+  const numbers = extractMeaningfulNumbers(answer);
+  if (!numbers.length) return "";
+  const verified = numbers.filter((number) => numberAppearsInDocument(number, documentContext));
+  const unverified = numbers.filter((number) => !numberAppearsInDocument(number, documentContext));
+  const notes: string[] = [];
+  const excerpt = findSourceExcerpt(documentContext, verified);
+  if (excerpt && !/📌\s*Source:/i.test(answer)) notes.push(`📌 Source: "${excerpt}"`);
+  if (unverified.length) notes.push(`⚠️ Could not verify this number in the document: ${unverified.join(", ")}`);
+  return notes.length ? `\n\n${notes.join("\n")}` : "";
+}
+
+function streamWithDocumentVerification(upstreamBody: ReadableStream<Uint8Array> | null, documentContext: string) {
+  if (!upstreamBody) return streamSingleMessage("**AI service returned an empty response.**");
+  const reader = upstreamBody.getReader();
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let answer = "";
+  let finished = false;
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const enqueueEvent = (payload: string) => controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+      const enqueueDelta = (content: string) => enqueueEvent(JSON.stringify({ choices: [{ delta: { content } }] }));
+      const finish = () => {
+        if (finished) return;
+        const note = buildDocumentVerificationNote(answer, documentContext);
+        if (note) enqueueDelta(note);
+        enqueueEvent("[DONE]");
+        finished = true;
+      };
+      const processEvent = (raw: string) => {
+        const dataLines = raw.split(/\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim());
+        if (!dataLines.length) {
+          controller.enqueue(encoder.encode(`${raw}\n\n`));
+          return;
+        }
+        for (const data of dataLines) {
+          if (data === "[DONE]") {
+            finish();
+            continue;
+          }
+          try {
+            const parsed = JSON.parse(data);
+            const content = parsed?.choices?.[0]?.delta?.content ?? parsed?.choices?.[0]?.message?.content;
+            if (typeof content === "string") answer += content;
+          } catch (_) {}
+          enqueueEvent(data);
+        }
+      };
+
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let boundary = buffer.indexOf("\n\n");
+        while (boundary !== -1) {
+          const raw = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          processEvent(raw);
+          boundary = buffer.indexOf("\n\n");
+        }
+      }
+      if (buffer.trim()) processEvent(buffer);
+      finish();
+      controller.close();
+    },
+  });
+
+  return new Response(stream, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
+}
+
 function streamSingleMessage(content: string) {
   const encoder = new TextEncoder();
 
