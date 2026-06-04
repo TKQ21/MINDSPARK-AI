@@ -488,10 +488,13 @@ serve(async (req) => {
     const documentContext = typeof body?.documentContext === "string" ? body.documentContext : "";
     const requestedModel = typeof body?.model === "string" ? body.model : FREE_MODEL;
     const isPro = !!body?.isPro;
+    const hasDocContext = documentContext.trim().length > 0;
 
-    // Server-side enforcement: free users only get the free model
+    // Server-side enforcement: free users only get the free model, except document Q&A always uses Pro for accuracy.
     let model = requestedModel;
+    if (hasDocContext) model = "gemini-1.5-pro";
     if (!isPro && model !== FREE_MODEL) model = FREE_MODEL;
+    if (hasDocContext) model = "gemini-1.5-pro";
     if (!GROQ_MODELS.has(model) && !GEMINI_MODELS.has(model)) model = FREE_MODEL;
 
     if (!messages.length) {
@@ -504,7 +507,6 @@ serve(async (req) => {
     const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY");
 
     const lastUserMsg = [...messages].reverse().find((m: any) => m.role === "user");
-    const hasDocContext = documentContext.trim().length > 0;
     const intent = hasDocContext ? "document" : (lastUserMsg ? detectIntent(lastUserMsg.content) : "general");
     const systemPrompt = getSystemPrompt(intent, hasDocContext);
 
