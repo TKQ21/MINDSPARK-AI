@@ -328,7 +328,7 @@ serve(async (req) => {
 
     if (isTextLike) extractedText = new TextDecoder().decode(fileBuffer);
     else if (isImage) extractedText = await visionExtract(fileBytes, mimeType, fileName);
-    else if (isPDF) extractedText = await parsePdf(fileBytes);
+    else if (isPDF) extractedText = await parsePdfAccurately(fileBytes, fileName);
     else if (lowerName.endsWith(".docx")) extractedText = await parseDocx(fileBytes);
     else if (lowerName.endsWith(".xlsx")) extractedText = await parseXlsx(fileBytes);
     else if (lowerName.endsWith(".pptx")) extractedText = await parsePptx(fileBytes);
