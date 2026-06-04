@@ -144,6 +144,28 @@ async function parsePdfWithGeminiVision(bytes: Uint8Array, fileName: string, sel
   return cleanText(extracted);
 }
 
+async function parsePdfAccurately(bytes: Uint8Array, fileName: string) {
+  let selectableText = "";
+  try {
+    selectableText = await parsePdf(bytes);
+  } catch (err) {
+    console.warn("Selectable PDF extraction failed, trying vision:", err);
+  }
+
+  try {
+    const visionText = await parsePdfWithGeminiVision(bytes, fileName, selectableText);
+    return cleanText([
+      `# Gemini Vision precise extraction for ${fileName}`,
+      visionText,
+      selectableText ? `# Raw selectable PDF text for verification\n${selectableText}` : "",
+    ].filter(Boolean).join("\n\n"));
+  } catch (err) {
+    console.warn("Vision PDF extraction failed, using selectable text fallback:", err);
+    if (selectableText) return selectableText;
+    throw err;
+  }
+}
+
 async function parseDocx(bytes: Uint8Array) {
   const zip = await JSZip.loadAsync(bytes);
   const files = Object.keys(zip.files).filter((name) => /^word\/(document|header\d+|footer\d+)\.xml$/.test(name));
