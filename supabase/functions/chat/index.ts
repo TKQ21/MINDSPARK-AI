@@ -514,20 +514,18 @@ serve(async (req) => {
 
     if (hasDocContext) {
       const latestQuestion = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
-      const semantic = {
-        keywords: getQueryTerms(latestQuestion),
-        expandedQueries: expandQuery(latestQuestion),
-        wantsTable: /table|list|subjects?|papers?|topics?|marks?|syllabus|details?|data|chart|figure/i.test(latestQuestion),
-      };
-      const relevantChunks = pickRelevantChunks(documentContext, latestQuestion, semantic);
-
-      if (!relevantChunks.length) {
-        return streamSingleMessage("**This specific information is not in the document.**");
-      }
+      const useFullDocument = documentContext.length <= FULL_DOCUMENT_CONTEXT_LIMIT;
+      const contextForPrompt = useFullDocument
+        ? buildFullDocumentContext(documentContext)
+        : buildRetrievedContext(pickRelevantChunks(documentContext, latestQuestion, {
+          keywords: getQueryTerms(latestQuestion),
+          expandedQueries: expandQuery(latestQuestion),
+          wantsTable: /table|list|subjects?|papers?|topics?|marks?|syllabus|details?|data|chart|figure/i.test(latestQuestion),
+        }));
 
       apiMessages.push({
         role: "system",
-        content: `[Context — Document Excerpts from the uploaded file]\n\n${buildRetrievedContext(relevantChunks)}\n\n[Instructions]\nAnswer the user's question using ONLY the chunks above. Tables (lines with \`|\`) are real data — read every row carefully and quote values verbatim. If after careful reading the exact information truly does not appear, reply exactly: **This specific information is not in the document.** Always end with the citation block listing the chunk numbers you used.`,
+        content: `[Context — ${useFullDocument ? "FULL uploaded document text" : "Relevant document excerpts because the full text is over 100,000 characters"}]\n\n${contextForPrompt}\n\n[Instructions]\nAnswer the user's question using ONLY the document context above. Tables (lines with \`|\`) are real data — read every row carefully and quote values verbatim. For numeric answers, first find the exact matching row/line, then answer with the exact number and include 📌 Source with that exact row/line. If after careful reading the exact information truly does not appear, reply exactly: **Maine is document mein yeh data nahi paaya. Document mein jo data hai wo hai:** and list the closest explicit labels/rows actually present.`,
       });
     }
 
