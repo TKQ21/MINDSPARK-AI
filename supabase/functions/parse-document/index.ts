@@ -111,37 +111,43 @@ Return the complete extracted data in a structured markdown format. Preserve exa
 async function parsePdfWithGeminiVision(bytes: Uint8Array, fileName: string, selectableText: string) {
   const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not configured");
+  const models = ["gemini-1.5-pro-latest", "gemini-2.5-pro", "gemini-2.5-flash"];
+  let lastError = "";
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{
-          parts: [
-            { inline_data: { mime_type: "application/pdf", data: encodeBase64(bytes) } },
-            { text: buildPrecisionParsePrompt(fileName, selectableText) },
-          ],
-        }],
-        generationConfig: { temperature: 0, topP: 0.1 },
-      }),
-    },
-  );
+  for (const model of models) {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { inline_data: { mime_type: "application/pdf", data: encodeBase64(bytes) } },
+              { text: buildPrecisionParsePrompt(fileName, selectableText) },
+            ],
+          }],
+          generationConfig: { temperature: 0, topP: 0.1 },
+        }),
+      },
+    );
 
-  if (!response.ok) {
-    const errText = await response.text();
-    console.error("Gemini PDF extraction error:", response.status, errText);
-    throw new Error("Failed to extract PDF with vision");
+    if (!response.ok) {
+      lastError = await response.text();
+      console.error(`Gemini PDF extraction error (${model}):`, response.status, lastError);
+      continue;
+    }
+
+    const data = await response.json();
+    const extracted = (data.candidates?.[0]?.content?.parts || [])
+      .map((part: any) => typeof part.text === "string" ? part.text : "")
+      .join("\n")
+      .trim();
+    if (!extracted || extracted === "NOT_READABLE") throw new Error(unreadableFileMessage);
+    return cleanText(extracted);
   }
 
-  const data = await response.json();
-  const extracted = (data.candidates?.[0]?.content?.parts || [])
-    .map((part: any) => typeof part.text === "string" ? part.text : "")
-    .join("\n")
-    .trim();
-  if (!extracted || extracted === "NOT_READABLE") throw new Error(unreadableFileMessage);
-  return cleanText(extracted);
+  throw new Error(`Failed to extract PDF with vision: ${lastError}`);
 }
 
 async function parsePdfAccurately(bytes: Uint8Array, fileName: string) {
