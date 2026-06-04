@@ -226,6 +226,108 @@ function buildRetrievedContext(chunks: Array<{ chunk: string; index: number; sco
     .join("\n\n---\n\n");
 }
 
+const FULL_DOCUMENT_CONTEXT_LIMIT = 100_000;
+
+function buildFullDocumentContext(documentContext: string): string {
+  return `### Full Uploaded Document\n${documentContext}`;
+}
+
+function extractMeaningfulNumbers(answer: string): string[] {
+  const answerWithoutSources = answer.split(/📌\s*Source:/i)[0];
+  const matches = answerWithoutSources.match(/(?:[$₹€£]\s*)?\b\d{1,3}(?:,\d{3})*(?:\.\d+)?%?\b|\b\d+(?:\.\d+)?%/g) || [];
+  return [...new Set(matches.map((n) => n.trim()).filter((n) => /[%.,]/.test(n) || Number(n.replace(/[^\d.-]/g, "")) >= 10))];
+}
+
+function numberAppearsInDocument(value: string, documentContext: string): boolean {
+  const compactDoc = documentContext.replace(/\s+/g, "");
+  const variants = [value, value.replace(/,/g, ""), value.replace(/[^\d.%-]/g, "")].filter(Boolean);
+  return variants.some((variant) => documentContext.includes(variant) || compactDoc.includes(variant.replace(/\s+/g, "")));
+}
+
+function findSourceExcerpt(documentContext: string, numbers: string[]): string | null {
+  const lines = documentContext.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  for (const number of numbers) {
+    const variants = [number, number.replace(/,/g, ""), number.replace(/[^\d.%-]/g, "")].filter(Boolean);
+    const line = lines.find((candidate) => variants.some((variant) => candidate.includes(variant)));
+    if (!line) continue;
+    return line.length > 420 ? `${line.slice(0, 417)}...` : line;
+  }
+  return null;
+}
+
+function buildDocumentVerificationNote(answer: string, documentContext: string): string {
+  const numbers = extractMeaningfulNumbers(answer);
+  if (!numbers.length) return "";
+  const verified = numbers.filter((number) => numberAppearsInDocument(number, documentContext));
+  const unverified = numbers.filter((number) => !numberAppearsInDocument(number, documentContext));
+  const notes: string[] = [];
+  const excerpt = findSourceExcerpt(documentContext, verified);
+  if (excerpt && !/📌\s*Source:/i.test(answer)) notes.push(`📌 Source: "${excerpt}"`);
+  if (unverified.length) notes.push(`⚠️ Could not verify this number in the document: ${unverified.join(", ")}`);
+  return notes.length ? `\n\n${notes.join("\n")}` : "";
+}
+
+function streamWithDocumentVerification(upstreamBody: ReadableStream<Uint8Array> | null, documentContext: string) {
+  if (!upstreamBody) return streamSingleMessage("**AI service returned an empty response.**");
+  const reader = upstreamBody.getReader();
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let answer = "";
+  let finished = false;
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const enqueueEvent = (payload: string) => controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+      const enqueueDelta = (content: string) => enqueueEvent(JSON.stringify({ choices: [{ delta: { content } }] }));
+      const finish = () => {
+        if (finished) return;
+        const note = buildDocumentVerificationNote(answer, documentContext);
+        if (note) enqueueDelta(note);
+        enqueueEvent("[DONE]");
+        finished = true;
+      };
+      const processEvent = (raw: string) => {
+        const dataLines = raw.split(/\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim());
+        if (!dataLines.length) {
+          controller.enqueue(encoder.encode(`${raw}\n\n`));
+          return;
+        }
+        for (const data of dataLines) {
+          if (data === "[DONE]") {
+            finish();
+            continue;
+          }
+          try {
+            const parsed = JSON.parse(data);
+            const content = parsed?.choices?.[0]?.delta?.content ?? parsed?.choices?.[0]?.message?.content;
+            if (typeof content === "string") answer += content;
+          } catch (_) {}
+          enqueueEvent(data);
+        }
+      };
+
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let boundary = buffer.indexOf("\n\n");
+        while (boundary !== -1) {
+          const raw = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          processEvent(raw);
+          boundary = buffer.indexOf("\n\n");
+        }
+      }
+      if (buffer.trim()) processEvent(buffer);
+      finish();
+      controller.close();
+    },
+  });
+
+  return new Response(stream, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
+}
+
 function streamSingleMessage(content: string) {
   const encoder = new TextEncoder();
 
@@ -276,13 +378,13 @@ CORE RULES:
     return `You are MINDSPARK AI in **strict document Q&A mode** (NotebookLM-style).
 
 📄 **DOCUMENT ANALYSIS MODE ACTIVE**
-Only the retrieved chunks from the user's uploaded document are provided as [Context]. Treat them as the ONLY source of truth.
+The user's uploaded document is provided as [Context]. Treat it as the ONLY source of truth.
 
 🚨 CRITICAL ANTI-HALLUCINATION RULES — Follow EXACTLY:
-1. Answer ONLY from the [Context] chunks. NEVER use outside knowledge. NEVER guess.
+1. Answer ONLY from the [Context]. NEVER use outside knowledge. NEVER guess.
 2. If the user asks about a SPECIFIC numeric range (e.g. "41-50"), answer ONLY using chunks that contain that EXACT range. NEVER substitute "71+" or any other range as a stand-in.
 3. If the document has multiple values for the same category, list ALL of them with their exact labels.
-4. If the exact data is NOT in the context, reply EXACTLY: **This specific information is not in the document.**
+4. If the exact data is NOT in the context, reply EXACTLY: **Maine is document mein yeh data nahi paaya. Document mein jo data hai wo hai:** then list the closest explicit rows/labels actually present in the document.
 5. NEVER estimate, round, or invent any number. Quote values verbatim from the chunks.
 6. Keep answers SHORT and precise — 2–4 sentences (unless listing items or producing a table).
 7. Use Markdown: tables for tabular data, **bold** for key values, bullet lists for enumerations.
@@ -300,13 +402,14 @@ Only the retrieved chunks from the user's uploaded document are provided as [Con
     b. Before answering, show the matched row verbatim, e.g. *Matched row: | 40-50 | 74.32% |*
     c. Return the value EXACTLY as written — preserve every digit and decimal (e.g. **74.32%**, never rounded to 40% or 74%).
     d. If no row contains that EXACT label, reply: **The exact label "<label>" is not in the document.** Do NOT substitute a different row.
-12. **NO INVENTION / NO WORLD KNOWLEDGE** — Never write any sentence, fact, or biographical/narrative paragraph that is not present in the [Context]. When the user asks "what does the document say about X", quote the actual sentences from the chunks verbatim (use blockquotes). Do NOT generate new text from outside knowledge, even if you know the topic well.
+12. **NO INVENTION / NO WORLD KNOWLEDGE** — Never write any sentence, fact, or biographical/narrative paragraph that is not present in the [Context]. When the user asks "what does the document say about X", quote the actual sentences from the context verbatim (use blockquotes). Do NOT generate new text from outside knowledge, even if you know the topic well.
+13. Before final answer, double-check every number against the [Context]. If the number is not visibly present, do not state it as fact.
 
-📌 MANDATORY CITATION FORMAT — Every answer MUST end with:
+📌 MANDATORY CITATION FORMAT — Every answer with a factual/numeric claim MUST end with:
 \`\`\`
-📌 Source: [filename] | Chunk #[number]
+📌 Source: "[exact quote/row/line from document where the answer was found]"
 \`\`\`
-If multiple chunks were used, list each on a new line. The chunk numbers are shown in the [Context] as "### Chunk #N".`;
+If multiple source lines were used, list each on a new line. For full-document context, cite the exact visible line/row, not a generic filename.`;
   }
 
   const plugins: Record<string, string> = {
@@ -385,10 +488,13 @@ serve(async (req) => {
     const documentContext = typeof body?.documentContext === "string" ? body.documentContext : "";
     const requestedModel = typeof body?.model === "string" ? body.model : FREE_MODEL;
     const isPro = !!body?.isPro;
+    const hasDocContext = documentContext.trim().length > 0;
 
-    // Server-side enforcement: free users only get the free model
+    // Server-side enforcement: free users only get the free model, except document Q&A always uses Pro for accuracy.
     let model = requestedModel;
+    if (hasDocContext) model = "gemini-1.5-pro";
     if (!isPro && model !== FREE_MODEL) model = FREE_MODEL;
+    if (hasDocContext) model = "gemini-1.5-pro";
     if (!GROQ_MODELS.has(model) && !GEMINI_MODELS.has(model)) model = FREE_MODEL;
 
     if (!messages.length) {
@@ -401,7 +507,6 @@ serve(async (req) => {
     const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY");
 
     const lastUserMsg = [...messages].reverse().find((m: any) => m.role === "user");
-    const hasDocContext = documentContext.trim().length > 0;
     const intent = hasDocContext ? "document" : (lastUserMsg ? detectIntent(lastUserMsg.content) : "general");
     const systemPrompt = getSystemPrompt(intent, hasDocContext);
 
@@ -409,20 +514,18 @@ serve(async (req) => {
 
     if (hasDocContext) {
       const latestQuestion = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
-      const semantic = {
-        keywords: getQueryTerms(latestQuestion),
-        expandedQueries: expandQuery(latestQuestion),
-        wantsTable: /table|list|subjects?|papers?|topics?|marks?|syllabus|details?|data|chart|figure/i.test(latestQuestion),
-      };
-      const relevantChunks = pickRelevantChunks(documentContext, latestQuestion, semantic);
-
-      if (!relevantChunks.length) {
-        return streamSingleMessage("**This specific information is not in the document.**");
-      }
+      const useFullDocument = documentContext.length <= FULL_DOCUMENT_CONTEXT_LIMIT;
+      const contextForPrompt = useFullDocument
+        ? buildFullDocumentContext(documentContext)
+        : buildRetrievedContext(pickRelevantChunks(documentContext, latestQuestion, {
+          keywords: getQueryTerms(latestQuestion),
+          expandedQueries: expandQuery(latestQuestion),
+          wantsTable: /table|list|subjects?|papers?|topics?|marks?|syllabus|details?|data|chart|figure/i.test(latestQuestion),
+        }));
 
       apiMessages.push({
         role: "system",
-        content: `[Context — Document Excerpts from the uploaded file]\n\n${buildRetrievedContext(relevantChunks)}\n\n[Instructions]\nAnswer the user's question using ONLY the chunks above. Tables (lines with \`|\`) are real data — read every row carefully and quote values verbatim. If after careful reading the exact information truly does not appear, reply exactly: **This specific information is not in the document.** Always end with the citation block listing the chunk numbers you used.`,
+        content: `[Context — ${useFullDocument ? "FULL uploaded document text" : "Relevant document excerpts because the full text is over 100,000 characters"}]\n\n${contextForPrompt}\n\n[Instructions]\nAnswer the user's question using ONLY the document context above. Tables (lines with \`|\`) are real data — read every row carefully and quote values verbatim. For numeric answers, first find the exact matching row/line, then answer with the exact number and include 📌 Source with that exact row/line. If after careful reading the exact information truly does not appear, reply exactly: **Maine is document mein yeh data nahi paaya. Document mein jo data hai wo hai:** and list the closest explicit labels/rows actually present.`,
       });
     }
 
@@ -495,6 +598,8 @@ serve(async (req) => {
         status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+
+    if (hasDocContext) return streamWithDocumentVerification(response.body, documentContext);
 
     return new Response(response.body, {
       headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
