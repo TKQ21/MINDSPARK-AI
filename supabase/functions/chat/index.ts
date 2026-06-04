@@ -599,6 +599,8 @@ serve(async (req) => {
       });
     }
 
+    if (hasDocContext) return streamWithDocumentVerification(response.body, documentContext);
+
     return new Response(response.body, {
       headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
     });
