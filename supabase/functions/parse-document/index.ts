@@ -86,6 +86,64 @@ async function parsePdf(bytes: Uint8Array) {
   return cleanText(pages.join("\n\n"));
 }
 
+function buildPrecisionParsePrompt(fileName: string, documentText = "") {
+  const safeDocumentText = documentText.length <= 100_000
+    ? documentText
+    : `${documentText.slice(0, 100_000)}\n\n[Selectable text preview truncated here because it exceeded 100,000 characters; still read the attached PDF itself completely.]`;
+
+  return `You are a precise document parser. Extract ALL data from this document with 100% accuracy. Pay special attention to:
+
+ALL numbers, percentages, rates exactly as written
+ALL table data row by row
+ALL chart values and labels
+Do NOT guess or approximate any numbers
+If a number is 74.32%, write exactly 74.32%
+Extract every single data point you can find
+
+For BI dashboards, charts, image-only pages, graphs, legends, axes, KPI cards, filters, and tables: read the attached PDF visually and extract every visible value with its label.
+
+File name: ${fileName}
+Document content: ${safeDocumentText || "[Read the attached PDF directly, including image/chart content.]"}
+
+Return the complete extracted data in a structured markdown format. Preserve exact page numbers, row labels, column labels, percentages, decimals, currency symbols, and units. Do not summarize or invent. If unreadable, respond exactly NOT_READABLE.`;
+}
+
+async function parsePdfWithGeminiVision(bytes: Uint8Array, fileName: string, selectableText: string) {
+  const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+  if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not configured");
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=${GEMINI_API_KEY}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            { inline_data: { mime_type: "application/pdf", data: encodeBase64(bytes) } },
+            { text: buildPrecisionParsePrompt(fileName, selectableText) },
+          ],
+        }],
+        generationConfig: { temperature: 0, topP: 0.1 },
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const errText = await response.text();
+    console.error("Gemini PDF extraction error:", response.status, errText);
+    throw new Error("Failed to extract PDF with vision");
+  }
+
+  const data = await response.json();
+  const extracted = (data.candidates?.[0]?.content?.parts || [])
+    .map((part: any) => typeof part.text === "string" ? part.text : "")
+    .join("\n")
+    .trim();
+  if (!extracted || extracted === "NOT_READABLE") throw new Error(unreadableFileMessage);
+  return cleanText(extracted);
+}
+
 async function parseDocx(bytes: Uint8Array) {
   const zip = await JSZip.loadAsync(bytes);
   const files = Object.keys(zip.files).filter((name) => /^word\/(document|header\d+|footer\d+)\.xml$/.test(name));
