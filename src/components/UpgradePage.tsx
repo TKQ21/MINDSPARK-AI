@@ -115,8 +115,13 @@ const UpgradePage: React.FC<Props> = ({ isPro, status, onBack, onSubmitted }) =>
       <AnimatePresence>
         {showPay && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="w-full max-w-md rounded-2xl border border-white/10 bg-[#0d1117] p-6 relative">
-              <button onClick={() => setShowPay(false)} className="absolute top-3 right-3 text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border border-white/10 bg-[#0d1117] p-6 relative">
+              <div className="flex items-center justify-between mb-3 sticky top-0 bg-[#0d1117] pb-2 -mx-6 px-6 -mt-6 pt-6 z-10">
+                <button onClick={() => setShowPay(false)} className="flex items-center gap-1.5 text-[12px] text-slate-300 hover:text-white transition-colors">
+                  <ArrowLeft className="w-4 h-4" /> Back
+                </button>
+                <button onClick={() => setShowPay(false)} className="text-slate-400 hover:text-white"><X className="w-5 h-5" /></button>
+              </div>
               <h2 className="text-lg font-semibold text-white mb-1">Complete Your Payment</h2>
               <p className="text-xs text-slate-400 mb-4">Scan the QR with any UPI app to pay ₹{settings.pro_price}</p>
 
