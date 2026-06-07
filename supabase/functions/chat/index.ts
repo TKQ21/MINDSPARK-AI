@@ -487,7 +487,7 @@ serve(async (req) => {
     const messages = Array.isArray(body?.messages) ? body.messages : [];
     const documentContext = typeof body?.documentContext === "string" ? body.documentContext : "";
     const requestedModel = typeof body?.model === "string" ? body.model : FREE_MODEL;
-    const isPro = !!body?.isPro;
+    void body?.isPro;
     const hasDocContext = documentContext.trim().length > 0;
 
     // IMPORTANT: All responses (free & pro) are answered by the same Gemini backend
