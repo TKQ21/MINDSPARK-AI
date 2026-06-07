@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Check, Sparkles, Zap, ArrowLeft, X, Clock, Copy } from "lucide-react";
+import { Check, Sparkles, Zap, ArrowLeft, X, Clock, Copy, Upload, Image as ImageIcon } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
