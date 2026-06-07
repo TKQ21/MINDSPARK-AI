@@ -36,26 +36,39 @@ const UpgradePage: React.FC<Props> = ({ isPro, status, onBack, onSubmitted }) =>
   const [settings, setSettings] = useState<{ qr_code_url: string | null; upi_id: string | null; pro_price: number }>({ qr_code_url: null, upi_id: null, pro_price: 200 });
   const [txn, setTxn] = useState("");
   const [busy, setBusy] = useState(false);
+  const [screenshot, setScreenshot] = useState<string | null>(null);
+  const [screenshotName, setScreenshotName] = useState<string>("");
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     supabase.from("admin_settings").select("qr_code_url, upi_id, pro_price").eq("id", 1).maybeSingle()
       .then(({ data }) => { if (data) setSettings(data as any); });
   }, []);
 
+  const onPickFile = (file: File) => {
+    if (!file.type.startsWith("image/")) return toast.error("Please upload an image (PNG/JPG)");
+    if (file.size > 5 * 1024 * 1024) return toast.error("Screenshot too large (max 5MB)");
+    const fr = new FileReader();
+    fr.onload = () => { setScreenshot(fr.result as string); setScreenshotName(file.name); };
+    fr.onerror = () => toast.error("Could not read file");
+    fr.readAsDataURL(file);
+  };
+
   const submit = async () => {
     if (txn.trim().length < 6) return toast.error("Enter a valid transaction ID (min 6 chars)");
+    if (!screenshot) return toast.error("Please upload your payment screenshot as proof");
     setBusy(true);
     try {
       const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch(SUBMIT_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session?.access_token || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
-        body: JSON.stringify({ txn_id: txn.trim() }),
+        body: JSON.stringify({ txn_id: txn.trim(), screenshot_dataUrl: screenshot }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Submission failed");
-      toast.success("✓ Payment submitted! Pro will be activated within 2-4 hours.");
-      setShowPay(false); setTxn("");
+      toast.success("✓ Payment submitted with proof! Pro will be activated within 2-4 hours.");
+      setShowPay(false); setTxn(""); setScreenshot(null); setScreenshotName("");
       onSubmitted?.();
     } catch (e: any) { toast.error(e.message); }
     finally { setBusy(false); }
