@@ -487,15 +487,17 @@ serve(async (req) => {
     const messages = Array.isArray(body?.messages) ? body.messages : [];
     const documentContext = typeof body?.documentContext === "string" ? body.documentContext : "";
     const requestedModel = typeof body?.model === "string" ? body.model : FREE_MODEL;
-    const isPro = !!body?.isPro;
+    void body?.isPro;
     const hasDocContext = documentContext.trim().length > 0;
 
-    // Server-side enforcement: free users only get the free model, except document Q&A always uses Pro for accuracy.
-    let model = requestedModel;
+    // IMPORTANT: All responses (free & pro) are answered by the same Gemini backend
+    // for consistent quality. The user-facing model selector is cosmetic only —
+    // pro users can "choose" any model but the backend always serves Gemini.
+    void requestedModel;
+    let model = FREE_MODEL;
     if (hasDocContext) model = "gemini-1.5-pro";
-    if (!isPro && model !== FREE_MODEL) model = FREE_MODEL;
-    if (hasDocContext) model = "gemini-1.5-pro";
-    if (!GROQ_MODELS.has(model) && !GEMINI_MODELS.has(model)) model = FREE_MODEL;
+    if (!GEMINI_MODELS.has(model)) model = FREE_MODEL;
+
 
     if (!messages.length) {
       return new Response(JSON.stringify({ error: "Messages are required." }), {
