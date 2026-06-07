@@ -212,13 +212,20 @@ const RequestsTab: React.FC<{ passwordHash: string }> = ({ passwordHash }) => {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={5} className="p-6 text-center text-slate-500">Loading…</td></tr>
+              <tr><td colSpan={6} className="p-6 text-center text-slate-500">Loading…</td></tr>
             ) : filtered.length === 0 ? (
-              <tr><td colSpan={5} className="p-6 text-center text-slate-500">No requests</td></tr>
+              <tr><td colSpan={6} className="p-6 text-center text-slate-500">No requests</td></tr>
             ) : filtered.map((r) => (
               <tr key={r.id} className="border-t border-[#30363d]">
                 <td className="p-3 text-slate-200">{r.email || "—"}</td>
                 <td className="p-3 font-mono text-blue-300">{r.txn_id}</td>
+                <td className="p-3 text-center">
+                  {r.screenshot_url ? (
+                    <a href={r.screenshot_url} target="_blank" rel="noopener noreferrer" title="Click to view full screenshot">
+                      <img src={r.screenshot_url} alt="Payment proof" className="w-14 h-14 object-cover rounded border border-[#30363d] hover:border-blue-400 mx-auto" />
+                    </a>
+                  ) : <span className="text-rose-400 text-[10px]">No proof</span>}
+                </td>
                 <td className="p-3 text-slate-400">{new Date(r.submitted_at).toLocaleString()}</td>
                 <td className="p-3 text-center">
                   <span className={`px-2 py-0.5 rounded-full text-[10px] uppercase font-bold ${
