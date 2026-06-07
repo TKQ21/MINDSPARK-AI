@@ -162,6 +162,23 @@ const UpgradePage: React.FC<Props> = ({ isPro, status, onBack, onSubmitted }) =>
               <label className="text-xs text-slate-400 block mb-1">After paying, enter UPI Transaction ID</label>
               <input value={txn} onChange={(e) => setTxn(e.target.value)} placeholder="e.g. 412345678901" className="w-full bg-[#161b22] border border-[#30363d] rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:border-blue-400 mb-3" />
 
+              <label className="text-xs text-slate-400 block mb-1">Payment screenshot (proof) <span className="text-rose-400">*</span></label>
+              <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => e.target.files?.[0] && onPickFile(e.target.files[0])} />
+              {screenshot ? (
+                <div className="mb-3 rounded-lg border border-emerald-400/30 bg-emerald-500/5 p-2">
+                  <div className="flex items-center gap-2 mb-2">
+                    <ImageIcon className="w-3.5 h-3.5 text-emerald-300" />
+                    <span className="text-xs text-emerald-200 flex-1 truncate">{screenshotName}</span>
+                    <button onClick={() => { setScreenshot(null); setScreenshotName(""); }} className="text-slate-400 hover:text-rose-300"><X className="w-3.5 h-3.5" /></button>
+                  </div>
+                  <img src={screenshot} alt="Payment proof preview" className="max-h-40 mx-auto rounded" />
+                </div>
+              ) : (
+                <button type="button" onClick={() => fileRef.current?.click()} className="w-full mb-3 py-2.5 rounded-lg border border-dashed border-white/20 hover:border-blue-400 text-xs text-slate-300 flex items-center justify-center gap-2 transition-colors">
+                  <Upload className="w-3.5 h-3.5" /> Upload payment screenshot (PNG/JPG, max 5MB)
+                </button>
+              )}
+
               <button disabled={busy} onClick={submit} className="w-full py-2.5 rounded-xl text-sm font-semibold text-white bg-gradient-to-r from-[#2563EB] to-[#1D4ED8] hover:from-[#1D4ED8] hover:to-[#1E40AF] disabled:opacity-50">
                 {busy ? "Submitting…" : "Submit Payment →"}
               </button>
