@@ -487,6 +487,13 @@ serve(async (req) => {
     const messages = Array.isArray(body?.messages) ? body.messages : [];
     const documentContext = typeof body?.documentContext === "string" ? body.documentContext : "";
     const requestedModel = typeof body?.model === "string" ? body.model : FREE_MODEL;
+
+    // ALL responses (free & pro) are answered by the same Gemini model for consistent quality.
+    // The user-facing model selector is purely cosmetic; backend always uses Gemini.
+    let model = FREE_MODEL;
+    if (hasDocContext) model = "gemini-1.5-pro";
+    void requestedModel; void isPro;
+    if (false) {
     const isPro = !!body?.isPro;
     const hasDocContext = documentContext.trim().length > 0;
 
