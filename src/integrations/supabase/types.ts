@@ -138,6 +138,7 @@ export type Database = {
           email: string | null
           id: string
           reviewed_at: string | null
+          screenshot_url: string | null
           status: string
           submitted_at: string
           txn_id: string
@@ -147,6 +148,7 @@ export type Database = {
           email?: string | null
           id?: string
           reviewed_at?: string | null
+          screenshot_url?: string | null
           status?: string
           submitted_at?: string
           txn_id: string
@@ -156,6 +158,7 @@ export type Database = {
           email?: string | null
           id?: string
           reviewed_at?: string | null
+          screenshot_url?: string | null
           status?: string
           submitted_at?: string
           txn_id?: string
