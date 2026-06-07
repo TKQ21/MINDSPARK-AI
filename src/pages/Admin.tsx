@@ -29,6 +29,7 @@ interface PaymentRequest {
   status: string;
   submitted_at: string;
   reviewed_at: string | null;
+  screenshot_url: string | null;
 }
 
 interface Settings { upi_id: string; qr_code_url: string; pro_price: number; hasPassword: boolean; }
@@ -207,7 +208,7 @@ const RequestsTab: React.FC<{ passwordHash: string }> = ({ passwordHash }) => {
       <div className="rounded-xl border border-[#30363d] overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-[#161b22] text-slate-400 text-xs uppercase">
-            <tr><th className="text-left p-3">Email</th><th className="text-left p-3">Transaction ID</th><th className="text-left p-3">Submitted</th><th className="p-3">Status</th><th className="p-3">Actions</th></tr>
+            <tr><th className="text-left p-3">Email</th><th className="text-left p-3">Transaction ID</th><th className="text-center p-3">Proof</th><th className="text-left p-3">Submitted</th><th className="p-3">Status</th><th className="p-3">Actions</th></tr>
           </thead>
           <tbody>
             {loading ? (
