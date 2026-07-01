@@ -346,7 +346,7 @@ function streamSingleMessage(content: string) {
 
 function geminiDirectModel(id: string): string {
   switch (id) {
-    case "gemini-1.5-pro": return "gemini-2.5-pro";
+    case "gemini-1.5-pro": return "gemini-2.5-flash";
     case "gemini-2.0-flash": return "gemini-2.5-flash";
     case "gemini-1.5-flash":
     default: return "gemini-2.5-flash";
