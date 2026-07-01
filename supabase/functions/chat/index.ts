@@ -344,6 +344,131 @@ function streamSingleMessage(content: string) {
   });
 }
 
+function geminiDirectModel(id: string): string {
+  switch (id) {
+    case "gemini-1.5-pro": return "gemini-1.5-pro-latest";
+    case "gemini-2.0-flash": return "gemini-2.0-flash";
+    case "gemini-1.5-flash":
+    default: return "gemini-1.5-flash-latest";
+  }
+}
+
+function transformGeminiStream(upstreamBody: ReadableStream<Uint8Array> | null) {
+  if (!upstreamBody) return streamSingleMessage("**AI service returned an empty response.**");
+
+  const reader = upstreamBody.getReader();
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let finished = false;
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const enqueueEvent = (payload: string) => controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+      const enqueueDelta = (content: string) => enqueueEvent(JSON.stringify({ choices: [{ delta: { content } }] }));
+      const finish = () => {
+        if (finished) return;
+        enqueueEvent("[DONE]");
+        finished = true;
+      };
+      const processEvent = (raw: string) => {
+        const dataLines = raw
+          .split(/\n/)
+          .filter((line) => line.trim().startsWith("data:"))
+          .map((line) => line.replace(/^\s*data:\s?/, "").trim())
+          .filter(Boolean);
+
+        for (const data of dataLines) {
+          try {
+            const parsed = JSON.parse(data);
+            const parts = parsed?.candidates?.[0]?.content?.parts || [];
+            for (const part of parts) {
+              if (typeof part?.text === "string" && part.text) enqueueDelta(part.text);
+            }
+          } catch (_) {
+            // Ignore non-JSON keepalive/noise frames from the upstream stream.
+          }
+        }
+      };
+
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let boundary = buffer.indexOf("\n\n");
+        while (boundary !== -1) {
+          const raw = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          processEvent(raw);
+          boundary = buffer.indexOf("\n\n");
+        }
+      }
+      if (buffer.trim()) processEvent(buffer);
+      finish();
+      controller.close();
+    },
+  });
+
+  return new Response(stream, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
+}
+
+function toGeminiPayload(apiMessages: any[], hasDocContext: boolean) {
+  const systemParts: Array<{ text: string }> = [];
+  const contents: Array<{ role: "user" | "model"; parts: Array<{ text: string }> }> = [];
+
+  for (const message of apiMessages) {
+    const text = typeof message?.content === "string" ? message.content.trim() : "";
+    if (!text) continue;
+    if (message.role === "system") {
+      systemParts.push({ text });
+      continue;
+    }
+    contents.push({
+      role: message.role === "assistant" ? "model" : "user",
+      parts: [{ text }],
+    });
+  }
+
+  return {
+    systemInstruction: systemParts.length ? { parts: systemParts } : undefined,
+    contents,
+    generationConfig: {
+      temperature: hasDocContext ? 0 : 0.7,
+      topP: hasDocContext ? 0.1 : 0.95,
+      maxOutputTokens: hasDocContext ? 4096 : 2048,
+    },
+  };
+}
+
+async function callDirectGemini(apiMessages: any[], model: string, hasDocContext: boolean) {
+  const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") || Deno.env.get("VITE_GEMINI_API_KEY");
+  if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not configured");
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${geminiDirectModel(model)}:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(toGeminiPayload(apiMessages, hasDocContext)),
+    },
+  );
+
+  if (!response.ok) {
+    if (response.status === 429) {
+      return new Response(JSON.stringify({ error: "Rate limit exceeded." }), {
+        status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    const t = await response.text();
+    console.error("Direct Gemini error:", response.status, t);
+    return new Response(JSON.stringify({ error: "AI service temporarily unavailable." }), {
+      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  return transformGeminiStream(response.body);
+}
+
 function detectIntent(message: string): string {
   const msg = message.toLowerCase();
   if (/solve|math|equation|integral|derivative|calculus|algebra|geometry|trigonometry|formula/.test(msg)) return "education";
