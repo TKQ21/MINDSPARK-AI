@@ -346,10 +346,10 @@ function streamSingleMessage(content: string) {
 
 function geminiDirectModel(id: string): string {
   switch (id) {
-    case "gemini-1.5-pro": return "gemini-1.5-pro-latest";
+    case "gemini-1.5-pro": return "gemini-1.5-pro";
     case "gemini-2.0-flash": return "gemini-2.0-flash";
     case "gemini-1.5-flash":
-    default: return "gemini-1.5-flash-latest";
+    default: return "gemini-1.5-flash";
   }
 }
 
