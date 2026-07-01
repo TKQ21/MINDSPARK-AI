@@ -630,7 +630,6 @@ serve(async (req) => {
       });
     }
 
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY");
 
     const lastUserMsg = [...messages].reverse().find((m: any) => m.role === "user");
@@ -691,7 +690,15 @@ serve(async (req) => {
       });
     }
 
-    // Otherwise Gemini via Lovable AI Gateway
+    // Otherwise Gemini directly via the project's Gemini key. This avoids the
+    // Lovable gateway's shared credit 402 from being shown as the user's app
+    // usage limit. App plan limits remain controlled per Gmail in user_plans.
+    const directGemini = await callDirectGemini(apiMessages, model, hasDocContext);
+    if (hasDocContext && directGemini.body) return streamWithDocumentVerification(directGemini.body, documentContext);
+    return directGemini;
+
+    // Fallback retained only if direct Gemini is intentionally disabled later.
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
     if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
