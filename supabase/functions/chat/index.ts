@@ -694,6 +694,7 @@ serve(async (req) => {
     // Lovable gateway's shared credit 402 from being shown as the user's app
     // usage limit. App plan limits remain controlled per Gmail in user_plans.
     const directGemini = await callDirectGemini(apiMessages, model, hasDocContext);
+    if (directGemini.status !== 200) return directGemini;
     if (hasDocContext && directGemini.body) return streamWithDocumentVerification(directGemini.body, documentContext);
     return directGemini;
 
