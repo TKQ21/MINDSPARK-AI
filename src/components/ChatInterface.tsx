@@ -374,7 +374,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       if (!resp.ok) {
         const err = await resp.json().catch(() => ({}));
         if (resp.status === 429) { toast.error("Rate limit exceeded."); return; }
-        if (resp.status === 402) { toast.error("Usage limit reached."); return; }
+        if (resp.status === 402) { toast.error("AI service quota issue. Your MindSpark plan/limits were not changed."); return; }
         throw new Error(err.error || "Failed to get response");
       }
       if (!resp.body) throw new Error("No response stream");
