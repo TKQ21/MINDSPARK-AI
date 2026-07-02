@@ -550,7 +550,7 @@ The user's uploaded document is provided as [Context]. Treat it as the ONLY sour
 \`\`\`
 📌 Source: Chunk #<n>, Page <n>, Paragraph <n>
 \`\`\`
-Use only the fields you can identify from the [Context] markers (e.g. "### Chunk #3" or "Page 4"). Always include Paragraph number (1-indexed within the context). Do NOT include the quoted line — location numbers only.
+Use only the fields you can identify from the [Context] markers (e.g. "### Chunk #3" or "Page 4"). Always include Paragraph number (1-indexed within the context). Do NOT include the quoted line — location numbers only.`;
   }
 
   const plugins: Record<string, string> = {
