@@ -108,25 +108,82 @@ Document content: ${safeDocumentText || "[Read the attached PDF directly, includ
 Return the complete extracted data in a structured markdown format. Preserve exact page numbers, row labels, column labels, percentages, decimals, currency symbols, and units. Do not summarize or invent. If unreadable, respond exactly NOT_READABLE.`;
 }
 
+// Upload a large file to the Gemini Files API (resumable) and return an ACTIVE file_uri.
+// This lets us bypass the ~20MB inline_data cap and support PDFs / images up to ~2GB.
+async function uploadToGeminiFileApi(bytes: Uint8Array, mimeType: string, displayName: string, apiKey: string) {
+  const startRes = await fetch(
+    `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${apiKey}`,
+    {
+      method: "POST",
+      headers: {
+        "X-Goog-Upload-Protocol": "resumable",
+        "X-Goog-Upload-Command": "start",
+        "X-Goog-Upload-Header-Content-Length": String(bytes.byteLength),
+        "X-Goog-Upload-Header-Content-Type": mimeType,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ file: { display_name: displayName } }),
+    },
+  );
+  if (!startRes.ok) throw new Error(`Files API start failed: ${startRes.status} ${await startRes.text()}`);
+  const uploadUrl = startRes.headers.get("x-goog-upload-url") || startRes.headers.get("X-Goog-Upload-URL");
+  if (!uploadUrl) throw new Error("Files API did not return an upload URL");
+
+  const putRes = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      "Content-Length": String(bytes.byteLength),
+      "X-Goog-Upload-Offset": "0",
+      "X-Goog-Upload-Command": "upload, finalize",
+    },
+    body: bytes,
+  });
+  if (!putRes.ok) throw new Error(`Files API upload failed: ${putRes.status} ${await putRes.text()}`);
+  const uploaded = await putRes.json();
+  let file = uploaded.file;
+  if (!file?.uri) throw new Error("Files API did not return a file uri");
+
+  // Poll for ACTIVE state (PDFs need a few seconds of processing).
+  for (let i = 0; i < 20 && file.state && file.state !== "ACTIVE"; i++) {
+    await new Promise((r) => setTimeout(r, 1500));
+    const poll = await fetch(`https://generativelanguage.googleapis.com/v1beta/${file.name}?key=${apiKey}`);
+    if (poll.ok) file = await poll.json();
+    if (file.state === "FAILED") throw new Error("Files API processing failed");
+  }
+  return { uri: file.uri as string, mimeType };
+}
+
 async function parsePdfWithGeminiVision(bytes: Uint8Array, fileName: string, selectableText: string) {
   const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not configured");
   const models = ["gemini-1.5-pro-latest", "gemini-2.5-pro", "gemini-2.5-flash"];
   let lastError = "";
 
+  // Inline base64 is capped near 20MB per request. For anything larger — or when
+  // inline fails — upload via the resumable Files API and reference by URI.
+  const INLINE_MAX = 15 * 1024 * 1024;
+  let fileRef: { uri: string; mimeType: string } | null = null;
+  if (bytes.byteLength > INLINE_MAX) {
+    try {
+      fileRef = await uploadToGeminiFileApi(bytes, "application/pdf", fileName, GEMINI_API_KEY);
+      console.log("parse-document: uploaded large PDF via Files API", fileRef.uri);
+    } catch (err) {
+      console.warn("Files API upload failed, will still attempt inline:", err);
+    }
+  }
+
   for (const model of models) {
+    const filePart = fileRef
+      ? { file_data: { mime_type: fileRef.mimeType, file_uri: fileRef.uri } }
+      : { inline_data: { mime_type: "application/pdf", data: encodeBase64(bytes) } };
+
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          contents: [{
-            parts: [
-              { inline_data: { mime_type: "application/pdf", data: encodeBase64(bytes) } },
-              { text: buildPrecisionParsePrompt(fileName, selectableText) },
-            ],
-          }],
+          contents: [{ parts: [filePart, { text: buildPrecisionParsePrompt(fileName, selectableText) }] }],
           generationConfig: { temperature: 0, topP: 0.1 },
         }),
       },
@@ -135,6 +192,15 @@ async function parsePdfWithGeminiVision(bytes: Uint8Array, fileName: string, sel
     if (!response.ok) {
       lastError = await response.text();
       console.error(`Gemini PDF extraction error (${model}):`, response.status, lastError);
+      // If inline failed for size reasons, retry the same model via Files API once.
+      if (!fileRef && (response.status === 400 || response.status === 413)) {
+        try {
+          fileRef = await uploadToGeminiFileApi(bytes, "application/pdf", fileName, GEMINI_API_KEY);
+          console.log("parse-document: retrying via Files API after inline failure");
+        } catch (err) {
+          console.warn("Files API fallback also failed:", err);
+        }
+      }
       continue;
     }
 
