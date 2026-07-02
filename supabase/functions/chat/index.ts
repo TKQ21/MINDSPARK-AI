@@ -546,11 +546,11 @@ The user's uploaded document is provided as [Context]. Treat it as the ONLY sour
 12. **NO INVENTION / NO WORLD KNOWLEDGE** — Never write any sentence, fact, or biographical/narrative paragraph that is not present in the [Context]. When the user asks "what does the document say about X", quote the actual sentences from the context verbatim (use blockquotes). Do NOT generate new text from outside knowledge, even if you know the topic well.
 13. Before final answer, double-check every number against the [Context]. If the number is not visibly present, do not state it as fact.
 
-📌 MANDATORY CITATION FORMAT — Every answer with a factual/numeric claim MUST end with:
+📌 MANDATORY CITATION FORMAT — Every answer with a factual/numeric claim MUST end with a LOCATION-ONLY citation (NEVER re-quote the answer text; NEVER paste the excerpt again):
 \`\`\`
-📌 Source: "[exact quote/row/line from document where the answer was found]"
+📌 Source: Chunk #<n>, Page <n>, Paragraph <n>
 \`\`\`
-If multiple source lines were used, list each on a new line. For full-document context, cite the exact visible line/row, not a generic filename.`;
+Use only the fields you can identify from the [Context] markers (e.g. "### Chunk #3" or "Page 4"). Always include Paragraph number (1-indexed within the context). Do NOT include the quoted line — location numbers only.
   }
 
   const plugins: Record<string, string> = {
