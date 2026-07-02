@@ -667,7 +667,7 @@ serve(async (req) => {
 
       apiMessages.push({
         role: "system",
-        content: `[Context — ${useFullDocument ? "FULL uploaded document text" : "Relevant document excerpts because the full text is over 100,000 characters"}]\n\n${contextForPrompt}\n\n[Instructions]\nAnswer the user's question using ONLY the document context above. Tables (lines with \`|\`) are real data — read every row carefully and quote values verbatim. For numeric answers, first find the exact matching row/line, then answer with the exact number and include 📌 Source with that exact row/line. If after careful reading the exact information truly does not appear, reply exactly: **Maine is document mein yeh data nahi paaya. Document mein jo data hai wo hai:** and list the closest explicit labels/rows actually present.`,
+        content: `[Context — ${useFullDocument ? "FULL uploaded document text" : "Relevant document excerpts because the full text is over 100,000 characters"}]\n\n${contextForPrompt}\n\n[Instructions]\nAnswer the user's question using ONLY the document context above. Tables (lines with \`|\`) are real data — read every row carefully and quote values verbatim. For numeric answers, find the exact matching row/line and answer with the exact number. End the answer with a LOCATION-ONLY citation like "📌 Source: Chunk #3, Page 4, Paragraph 7" — do NOT repeat the quoted row/line as the source. If after careful reading the exact information truly does not appear, reply exactly: **Maine is document mein yeh data nahi paaya. Document mein jo data hai wo hai:** and list the closest explicit labels/rows actually present.`,
       });
     }
 
