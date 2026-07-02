@@ -244,13 +244,29 @@ function numberAppearsInDocument(value: string, documentContext: string): boolea
   return variants.some((variant) => documentContext.includes(variant) || compactDoc.includes(variant.replace(/\s+/g, "")));
 }
 
-function findSourceExcerpt(documentContext: string, numbers: string[]): string | null {
-  const lines = documentContext.split(/\n+/).map((line) => line.trim()).filter(Boolean);
-  for (const number of numbers) {
-    const variants = [number, number.replace(/,/g, ""), number.replace(/[^\d.%-]/g, "")].filter(Boolean);
-    const line = lines.find((candidate) => variants.some((variant) => candidate.includes(variant)));
-    if (!line) continue;
-    return line.length > 420 ? `${line.slice(0, 417)}...` : line;
+function findSourceLocation(documentContext: string, numbers: string[]): string | null {
+  // Split doc into paragraphs, tracking page + chunk markers if present.
+  const paragraphs = documentContext.split(/\n\s*\n/);
+  let currentPage: number | null = null;
+  let currentChunk: number | null = null;
+  const pageRegex = /(?:^|\n)\s*(?:---\s*)?Page\s+(\d+)/i;
+  const chunkRegex = /###\s*Chunk\s*#(\d+)/i;
+  for (let i = 0; i < paragraphs.length; i++) {
+    const para = paragraphs[i];
+    const pageMatch = para.match(pageRegex);
+    if (pageMatch) currentPage = Number(pageMatch[1]);
+    const chunkMatch = para.match(chunkRegex);
+    if (chunkMatch) currentChunk = Number(chunkMatch[1]);
+    for (const number of numbers) {
+      const variants = [number, number.replace(/,/g, ""), number.replace(/[^\d.%-]/g, "")].filter(Boolean);
+      if (variants.some((v) => para.includes(v))) {
+        const parts: string[] = [];
+        if (currentChunk !== null) parts.push(`Chunk #${currentChunk}`);
+        if (currentPage !== null) parts.push(`Page ${currentPage}`);
+        parts.push(`Paragraph ${i + 1}`);
+        return parts.join(", ");
+      }
+    }
   }
   return null;
 }
@@ -261,8 +277,8 @@ function buildDocumentVerificationNote(answer: string, documentContext: string):
   const verified = numbers.filter((number) => numberAppearsInDocument(number, documentContext));
   const unverified = numbers.filter((number) => !numberAppearsInDocument(number, documentContext));
   const notes: string[] = [];
-  const excerpt = findSourceExcerpt(documentContext, verified);
-  if (excerpt && !/📌\s*Source:/i.test(answer)) notes.push(`📌 Source: "${excerpt}"`);
+  const location = findSourceLocation(documentContext, verified);
+  if (location && !/📌\s*Source:/i.test(answer)) notes.push(`📌 Source: ${location}`);
   if (unverified.length) notes.push(`⚠️ Could not verify this number in the document: ${unverified.join(", ")}`);
   return notes.length ? `\n\n${notes.join("\n")}` : "";
 }
