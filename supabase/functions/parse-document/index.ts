@@ -370,7 +370,7 @@ async function visionExtract(bytes: Uint8Array, mimeType: string, fileName: stri
   return cleanText(extracted);
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
