@@ -216,12 +216,26 @@ async function parsePdfWithGeminiVision(bytes: Uint8Array, fileName: string, sel
   throw new Error(`Failed to extract PDF with vision: ${lastError}`);
 }
 
+function looksLikeGoodText(text: string) {
+  // Heuristic: enough text and enough alphabetic content → treat as machine-readable PDF.
+  if (!text || text.length < 800) return false;
+  const alpha = (text.match(/[A-Za-z\u0900-\u097F]/g) || []).length;
+  return alpha / text.length > 0.35;
+}
+
 async function parsePdfAccurately(bytes: Uint8Array, fileName: string) {
   let selectableText = "";
   try {
     selectableText = await parsePdf(bytes);
   } catch (err) {
     console.warn("Selectable PDF extraction failed, trying vision:", err);
+  }
+
+  // FAST PATH: if the PDF already has clean selectable text, skip the slow Gemini vision pass.
+  // Vision only runs for scanned PDFs / dashboards / image-only pages.
+  if (looksLikeGoodText(selectableText)) {
+    console.log("parse-document: fast path — selectable text is sufficient, skipping vision.");
+    return selectableText;
   }
 
   try {
