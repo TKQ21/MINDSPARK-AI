@@ -1,5 +1,4 @@
-import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
-import { encodeBase64 } from "https://deno.land/std@0.224.0/encoding/base64.ts";
+import { encodeBase64 } from "https://esm.sh/@std/encoding@1.0.5/base64";
 import { getDocument } from "https://esm.sh/pdfjs-serverless@1.2.3";
 import JSZip from "https://esm.sh/jszip@3.10.1";
 
