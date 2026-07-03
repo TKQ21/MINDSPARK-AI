@@ -402,9 +402,15 @@ serve(async (req) => {
     }
 
     const lowerName = fileName.toLowerCase();
-    const isImage = contentType.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(lowerName);
+    const isImage = contentType.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|bmp|svg|heic|tiff?)$/i.test(lowerName);
     const isPDF = contentType.includes("pdf") || lowerName.endsWith(".pdf");
-    const isTextLike = contentType.startsWith("text/") || /\.(txt|md|csv|json|xml|html|log|tsv)$/i.test(lowerName);
+    const isTextLike =
+      contentType.startsWith("text/") ||
+      contentType.includes("json") ||
+      contentType.includes("xml") ||
+      contentType.includes("csv") ||
+      contentType.includes("javascript") ||
+      /\.(txt|md|markdown|csv|tsv|json|jsonl|ndjson|xml|html?|log|yaml|yml|ini|conf|env|rtf|py|js|ts|tsx|jsx|java|c|cc|cpp|h|hpp|cs|go|rs|rb|php|sql|sh|bash|zsh)$/i.test(lowerName);
 
     let mimeType = contentType || "application/octet-stream";
     if (isPDF) mimeType = "application/pdf";
@@ -412,13 +418,36 @@ serve(async (req) => {
 
     let extractedText = "";
 
-    if (isTextLike) extractedText = new TextDecoder().decode(fileBuffer);
-    else if (isImage) extractedText = await visionExtract(fileBytes, mimeType, fileName);
-    else if (isPDF) extractedText = await parsePdfAccurately(fileBytes, fileName);
-    else if (lowerName.endsWith(".docx")) extractedText = await parseDocx(fileBytes);
-    else if (lowerName.endsWith(".xlsx")) extractedText = await parseXlsx(fileBytes);
-    else if (lowerName.endsWith(".pptx")) extractedText = await parsePptx(fileBytes);
-    else extractedText = extractBinaryStrings(fileBytes);
+    if (isTextLike) {
+      let raw = new TextDecoder().decode(fileBuffer);
+      // Strip RTF control words if it's an RTF file.
+      if (/\.rtf$/i.test(lowerName)) raw = raw.replace(/\\[a-z]+-?\d*\s?/gi, " ").replace(/[{}]/g, " ");
+      extractedText = raw;
+    } else if (isImage) {
+      extractedText = await visionExtract(fileBytes, mimeType, fileName);
+    } else if (isPDF) {
+      extractedText = await parsePdfAccurately(fileBytes, fileName);
+    } else if (lowerName.endsWith(".docx")) {
+      extractedText = await parseDocx(fileBytes);
+    } else if (lowerName.endsWith(".xlsx") || lowerName.endsWith(".xlsm")) {
+      extractedText = await parseXlsx(fileBytes);
+    } else if (lowerName.endsWith(".pptx")) {
+      extractedText = await parsePptx(fileBytes);
+    } else if (/\.(odt|ods|odp)$/i.test(lowerName)) {
+      // OpenDocument formats are ZIPs with content.xml
+      try {
+        const zip = await JSZip.loadAsync(fileBytes);
+        const contentXml = await zip.file("content.xml")?.async("text");
+        extractedText = contentXml ? extractXmlText(contentXml) : extractBinaryStrings(fileBytes);
+      } catch {
+        extractedText = extractBinaryStrings(fileBytes);
+      }
+    } else if (/\.(doc|xls|ppt)$/i.test(lowerName)) {
+      // Legacy Office binary — best-effort string extraction.
+      extractedText = extractBinaryStrings(fileBytes);
+    } else {
+      extractedText = extractBinaryStrings(fileBytes);
+    }
 
     extractedText = cleanText(extractedText);
     if (!extractedText || extractedText.length < 8) throw new Error(unreadableFileMessage);
