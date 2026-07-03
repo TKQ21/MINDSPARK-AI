@@ -656,13 +656,21 @@ serve(async (req) => {
 
     if (hasDocContext) {
       const latestQuestion = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
+      // For follow-ups like "explain in hindi" or "aur detail do", combine
+      // the last few user turns so retrieval reuses prior topic keywords.
+      const recentUserTurns = messages
+        .filter((m: any) => m?.role === "user" && typeof m?.content === "string")
+        .slice(-3)
+        .map((m: any) => m.content)
+        .join("\n");
+      const retrievalQuery = recentUserTurns || latestQuestion;
       const useFullDocument = documentContext.length <= FULL_DOCUMENT_CONTEXT_LIMIT;
       const contextForPrompt = useFullDocument
         ? buildFullDocumentContext(documentContext)
-        : buildRetrievedContext(pickRelevantChunks(documentContext, latestQuestion, {
-          keywords: getQueryTerms(latestQuestion),
-          expandedQueries: expandQuery(latestQuestion),
-          wantsTable: /table|list|subjects?|papers?|topics?|marks?|syllabus|details?|data|chart|figure/i.test(latestQuestion),
+        : buildRetrievedContext(pickRelevantChunks(documentContext, retrievalQuery, {
+          keywords: getQueryTerms(retrievalQuery),
+          expandedQueries: expandQuery(retrievalQuery),
+          wantsTable: /table|list|subjects?|papers?|topics?|marks?|syllabus|details?|data|chart|figure/i.test(retrievalQuery),
         }));
 
       apiMessages.push({
