@@ -279,4 +279,12 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message, onRegenerate }) 
   );
 };
 
-export default MessageBubble;
+export default React.memo(MessageBubble, (prev, next) => {
+  return (
+    prev.message.id === next.message.id &&
+    prev.message.content === next.message.content &&
+    prev.message.imageUrl === next.message.imageUrl &&
+    prev.message.fileName === next.message.fileName &&
+    prev.onRegenerate === next.onRegenerate
+  );
+});
