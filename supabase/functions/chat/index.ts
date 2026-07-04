@@ -145,7 +145,7 @@ async function semanticQueryAnalysis(question: string, apiKey: string): Promise<
   try {
     const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      headers: { "Lovable-API-Key": apiKey, "Content-Type": "application/json" },
       body: JSON.stringify({
         model: "google/gemini-3-flash-preview",
         messages: [
@@ -471,7 +471,7 @@ async function callDirectGemini(apiMessages: any[], model: string, hasDocContext
 
   if (!response.ok) {
     if (response.status === 429) {
-      return new Response(JSON.stringify({ error: "Rate limit exceeded." }), {
+      return new Response(JSON.stringify({ error: "Primary AI route is busy." }), {
         status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -483,6 +483,51 @@ async function callDirectGemini(apiMessages: any[], model: string, hasDocContext
   }
 
   return transformGeminiStream(response.body);
+}
+
+async function callGatewayChat(apiMessages: any[], model: string, hasDocContext: boolean) {
+  const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+  if (!LOVABLE_API_KEY) {
+    return new Response(JSON.stringify({ error: "AI service is temporarily unavailable." }), {
+      status: 503,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+
+  const models = [geminiGatewayId(model), "google/gemini-3-flash-preview", "google/gemini-2.5-flash"];
+  let lastError = "";
+
+  for (const gatewayModel of [...new Set(models)]) {
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Lovable-API-Key": LOVABLE_API_KEY,
+        "Content-Type": "application/json",
+        "X-Lovable-AIG-SDK": "edge-function-fetch",
+      },
+      body: JSON.stringify({
+        model: gatewayModel,
+        messages: apiMessages,
+        temperature: hasDocContext ? 0 : 0.7,
+        max_tokens: hasDocContext ? 8192 : 4096,
+        stream: true,
+      }),
+    });
+
+    if (response.ok) {
+      return new Response(response.body, {
+        headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+      });
+    }
+
+    lastError = `${response.status} ${await response.text()}`;
+    console.warn(`Gateway chat fallback failed (${gatewayModel}):`, lastError);
+  }
+
+  return new Response(JSON.stringify({ error: "AI service is busy right now. Please try again in a moment." }), {
+    status: 503,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
 }
 
 function detectIntent(message: string): string {
@@ -714,13 +759,24 @@ serve(async (req) => {
       });
     }
 
-    // Otherwise Gemini directly via the project's Gemini key. This avoids the
-    // Lovable gateway's shared credit 402 from being shown as the user's app
-    // usage limit. App plan limits remain controlled per Gmail in user_plans.
-    const directGemini = await callDirectGemini(apiMessages, model, hasDocContext);
-    if (directGemini.status !== 200) return directGemini;
-    if (hasDocContext && directGemini.body) return streamWithDocumentVerification(directGemini.body, documentContext);
-    return directGemini;
+    // App plan limits stay controlled per Gmail in user_plans. If the primary
+    // Gemini route is temporarily busy, fall back to Lovable AI instead of
+    // surfacing a shared provider limit to the user.
+    try {
+      const directGemini = await callDirectGemini(apiMessages, model, hasDocContext);
+      if (directGemini.status === 200) {
+        if (hasDocContext && directGemini.body) return streamWithDocumentVerification(directGemini.body, documentContext);
+        return directGemini;
+      }
+      console.warn("Direct Gemini route failed, using gateway fallback:", directGemini.status);
+    } catch (err) {
+      console.warn("Direct Gemini route unavailable, using gateway fallback:", err);
+    }
+
+    const gatewayChat = await callGatewayChat(apiMessages, model, hasDocContext);
+    if (gatewayChat.status !== 200) return gatewayChat;
+    if (hasDocContext && gatewayChat.body) return streamWithDocumentVerification(gatewayChat.body, documentContext);
+    return gatewayChat;
   } catch (e) {
     console.error("chat error:", e);
     return new Response(JSON.stringify({ error: e instanceof Error ? e.message : "Unknown error" }), {
