@@ -4,7 +4,6 @@ import { clearLegacyMindSparkKeys, userScopedKey } from "@/lib/userStorage";
 
 export const QUESTION_LIMIT = 10;
 export const IMAGE_LIMIT = 5;
-export const DOC_LIMIT = 3;
 
 export type PlanStatus = "free" | "pro" | "pending";
 
@@ -218,7 +217,6 @@ export function useUserPlan() {
   const isPro = state.plan === "pro";
   const questionsExceeded = !isPro && state.questionCount >= QUESTION_LIMIT;
   const imagesExceeded = !isPro && state.imageCount >= IMAGE_LIMIT;
-  const docsExceeded = !isPro && state.docCount >= DOC_LIMIT;
   const msLeft = Math.max(0, state.resetAt - Date.now());
 
   return {
@@ -229,12 +227,10 @@ export function useUserPlan() {
     addDoc: () => increment("doc_upload_count"),
     questionsExceeded,
     imagesExceeded,
-    docsExceeded,
     hoursLeft: Math.floor(msLeft / 3_600_000),
     minutesLeft: Math.floor((msLeft % 3_600_000) / 60_000),
     questionLimit: QUESTION_LIMIT,
     imageLimit: IMAGE_LIMIT,
-    docLimit: DOC_LIMIT,
     refresh: loadUserPlan,
   };
 }
