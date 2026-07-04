@@ -8,7 +8,6 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const TOKEN_BUDGET = 32000;
 export const IMAGE_LIMIT = 5;
-export const DOC_LIMIT = 3;
 
 export type Plan = "free" | "pro";
 
@@ -92,7 +91,6 @@ export function useTokenUsage() {
   const isPro = plan === "pro";
   const tokensExceeded = !isPro && usage.tokens >= TOKEN_BUDGET;
   const imagesExceeded = !isPro && usage.images >= IMAGE_LIMIT;
-  const docsExceeded = !isPro && usage.docs >= DOC_LIMIT;
 
   const msLeft = Math.max(0, usage.resetAt - Date.now());
   const hoursLeft = Math.floor(msLeft / 3_600_000);
@@ -101,8 +99,8 @@ export function useTokenUsage() {
   return {
     usage, plan, isPro, setPlan,
     addTokens, addImage, addDoc,
-    tokensExceeded, imagesExceeded, docsExceeded,
+    tokensExceeded, imagesExceeded,
     hoursLeft, minutesLeft,
-    tokenBudget: TOKEN_BUDGET, imageLimit: IMAGE_LIMIT, docLimit: DOC_LIMIT,
+    tokenBudget: TOKEN_BUDGET, imageLimit: IMAGE_LIMIT,
   };
 }
