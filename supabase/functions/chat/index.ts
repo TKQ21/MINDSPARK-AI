@@ -451,7 +451,7 @@ function toGeminiPayload(apiMessages: any[], hasDocContext: boolean) {
     generationConfig: {
       temperature: hasDocContext ? 0 : 0.7,
       topP: hasDocContext ? 0.1 : 0.95,
-      maxOutputTokens: hasDocContext ? 4096 : 2048,
+      maxOutputTokens: hasDocContext ? 8192 : 4096,
     },
   };
 }
@@ -527,7 +527,7 @@ The user's uploaded document is provided as [Context]. Treat it as the ONLY sour
 3. If the document has multiple values for the same category, list ALL of them with their exact labels.
 4. If the exact data is NOT in the context, reply EXACTLY: **Maine is document mein yeh data nahi paaya. Document mein jo data hai wo hai:** then list the closest explicit rows/labels actually present in the document.
 5. NEVER estimate, round, or invent any number. Quote values verbatim from the chunks.
-6. Keep answers SHORT and precise — 2–4 sentences (unless listing items or producing a table).
+6. Give DEEP, DETAILED answers — explain thoroughly using every relevant detail from the [Context]. Never truncate. Use as many sections, bullets, tables, and quoted excerpts as needed. Only be short when the user explicitly asks for a one-liner (e.g. "in one word", "just the number").
 7. Use Markdown: tables for tabular data, **bold** for key values, bullet lists for enumerations.
 8. Preserve the document's wording for key facts and numbers.
 9. Match the user's language/script exactly: Hinglish/Roman Hindi must receive Hinglish/Roman Hindi, English must receive English, and other languages must receive the same language.
@@ -675,7 +675,7 @@ serve(async (req) => {
 
       apiMessages.push({
         role: "system",
-        content: `[Context — ${useFullDocument ? "FULL uploaded document text" : "Relevant document excerpts because the full text is over 100,000 characters"}]\n\n${contextForPrompt}\n\n[Instructions]\nAnswer the user's question using ONLY the document context above. Tables (lines with \`|\`) are real data — read every row carefully and quote values verbatim. For numeric answers, find the exact matching row/line and answer with the exact number. End the answer with a LOCATION-ONLY citation like "📌 Source: Chunk #3, Page 4, Paragraph 7" — do NOT repeat the quoted row/line as the source. If after careful reading the exact information truly does not appear, reply exactly: **Maine is document mein yeh data nahi paaya. Document mein jo data hai wo hai:** and list the closest explicit labels/rows actually present.`,
+        content: `[Context — ${useFullDocument ? "FULL uploaded document text" : "Relevant document excerpts because the full text is over 100,000 characters"}]\n\n${contextForPrompt}\n\n[Instructions]\nAnswer the user's question using ONLY the document context above, but answer DEEPLY and THOROUGHLY — do NOT truncate. Explain in detail, use headings/subheadings/bullets/tables, quote every relevant excerpt verbatim, and cover every angle the context supports (definitions, examples, comparisons, edge cases). Tables (lines with \`|\`) are real data — read every row carefully and quote values verbatim. For numeric answers, find the exact matching row/line and answer with the exact number. Handle follow-ups naturally: if the user asks to "explain in Hindi", "aur detail do", "summarize", "list points", etc., re-answer the SAME prior topic from the context in that requested style. End the answer with a LOCATION-ONLY citation like "📌 Source: Chunk #3, Page 4, Paragraph 7" — do NOT repeat the quoted row/line as the source. If after careful reading the exact information truly does not appear, reply exactly: **Maine is document mein yeh data nahi paaya. Document mein jo data hai wo hai:** and list the closest explicit labels/rows actually present.`,
       });
     }
 
@@ -698,7 +698,7 @@ serve(async (req) => {
           model,
           messages: apiMessages,
           temperature: hasDocContext ? 0 : 0.7,
-          max_tokens: 2048,
+          max_tokens: hasDocContext ? 8192 : 4096,
           stream: true,
         }),
       });

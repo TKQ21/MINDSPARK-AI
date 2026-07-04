@@ -14,7 +14,7 @@ interface Props {
 const freeFeatures = [
   "10 questions / day",
   "5 image generations / day",
-  "3 document uploads / day",
+  "Unlimited document uploads",
   "Gemini 1.5 Flash only",
   "Standard response speed",
 ];
