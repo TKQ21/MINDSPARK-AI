@@ -337,11 +337,48 @@ async function parsePptx(bytes: Uint8Array) {
 }
 
 async function visionExtract(bytes: Uint8Array, mimeType: string, fileName: string) {
+  const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") || Deno.env.get("VITE_GEMINI_API_KEY");
+  const prompt = `Extract every readable detail from ${fileName} into clean markdown. OCR all text. For dashboards/charts, capture every visible metric, label, legend, axis, filter, table row, total, percentage, and number. Do not summarize or invent. If unreadable, respond exactly NOT_READABLE.`;
+
+  if (GEMINI_API_KEY) {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { inline_data: { mime_type: mimeType, data: encodeBase64(bytes) } },
+              { text: prompt },
+            ],
+          }],
+          generationConfig: { temperature: 0, topP: 0.1 },
+        }),
+      },
+    );
+
+    if (response.ok) {
+      const data = await response.json();
+      const extracted = (data.candidates?.[0]?.content?.parts || [])
+        .map((part: any) => typeof part.text === "string" ? part.text : "")
+        .join("\n")
+        .trim();
+      if (extracted && extracted !== "NOT_READABLE") return cleanText(extracted);
+    } else {
+      console.warn("direct image extraction failed, trying gateway fallback:", response.status, await response.text());
+    }
+  }
+
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
   const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
-    headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
+    headers: {
+      "Lovable-API-Key": LOVABLE_API_KEY,
+      "Content-Type": "application/json",
+      "X-Lovable-AIG-SDK": "edge-function-fetch",
+    },
     body: JSON.stringify({
       model: "google/gemini-3.1-pro-preview",
       messages: [{
@@ -349,7 +386,7 @@ async function visionExtract(bytes: Uint8Array, mimeType: string, fileName: stri
         content: [
           {
             type: "text",
-            text: `Extract every readable detail from ${fileName} into clean markdown. OCR all text. For dashboards/charts, capture every visible metric, label, legend, axis, filter, table row, total, percentage, and number. Do not summarize or invent. If unreadable, respond exactly NOT_READABLE.`,
+            text: prompt,
           },
           { type: "image_url", image_url: { url: `data:${mimeType};base64,${encodeBase64(bytes)}` } },
         ],
