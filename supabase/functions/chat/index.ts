@@ -451,7 +451,7 @@ function toGeminiPayload(apiMessages: any[], hasDocContext: boolean) {
     generationConfig: {
       temperature: hasDocContext ? 0 : 0.7,
       topP: hasDocContext ? 0.1 : 0.95,
-      maxOutputTokens: hasDocContext ? 4096 : 2048,
+      maxOutputTokens: hasDocContext ? 8192 : 4096,
     },
   };
 }
