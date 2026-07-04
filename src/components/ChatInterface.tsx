@@ -307,13 +307,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       toast.error(`File too large. Max ${MAX_FILE_MB}MB.`);
       return;
     }
-    const freshUsage = await getFreshUsage();
-    const freshIsPro = freshUsage.plan === "pro" || freshUsage.isPro;
-    if (!freshIsPro && Number(freshUsage.docCount || 0) >= usage.docLimit) {
-      toast.info(`You've used all 3 free document uploads for today. Resets in ${resetCountdown(freshUsage)}.`);
-      goUpgrade();
-      return;
-    }
+    // No document upload limit for any user (free or pro).
     setDocumentReadError(null);
     const filePath = `${Date.now()}_${file.name}`;
     const { error: uploadError } = await supabase.storage.from("chat-uploads").upload(filePath, file);
@@ -321,7 +315,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     const { data: publicUrl } = supabase.storage.from("chat-uploads").getPublicUrl(filePath);
     const isImage = file.type.startsWith("image/");
     setUploadedFile({ name: file.name, url: publicUrl.publicUrl, isImage });
-    if (!freshIsPro) await usage.addDoc();
+
 
     const { text: extractedText, error: parseError } = await parseDocument(publicUrl.publicUrl, file.name);
     if (extractedText) {
