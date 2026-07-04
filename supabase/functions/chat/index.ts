@@ -698,7 +698,7 @@ serve(async (req) => {
           model,
           messages: apiMessages,
           temperature: hasDocContext ? 0 : 0.7,
-          max_tokens: 2048,
+          max_tokens: hasDocContext ? 8192 : 4096,
           stream: true,
         }),
       });
