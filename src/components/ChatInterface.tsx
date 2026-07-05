@@ -155,6 +155,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       .from("conversation_documents")
       .select("file_name,extracted_text")
       .eq("conversation_id", conversationId)
+      .order("updated_at", { ascending: false })
+      .limit(1)
       .maybeSingle();
     if (docRes.data?.extracted_text) {
       setLatestDocumentContext(conversationId, docRes.data.extracted_text);
@@ -204,14 +206,24 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     });
   };
 
+  const deleteDocumentContextFromDB = async (convId: string) => {
+    if (!userId) return;
+    await (supabase as any)
+      .from("conversation_documents")
+      .delete()
+      .eq("conversation_id", convId)
+      .eq("user_id", userId);
+  };
+
   const saveDocumentContextToDB = async (convId: string, fileName: string, extractedText: string) => {
     if (!userId || !extractedText.trim()) return;
-    await (supabase as any).from("conversation_documents").upsert({
+    await deleteDocumentContextFromDB(convId);
+    await (supabase as any).from("conversation_documents").insert({
       conversation_id: convId,
       user_id: userId,
       file_name: fileName || "Uploaded document",
       extracted_text: extractedText,
-    }, { onConflict: "conversation_id" });
+    });
   };
 
   const getFunctionHeaders = async () => {
@@ -308,6 +320,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       return;
     }
     // No document upload limit for any user (free or pro).
+    // New upload replaces the old document context completely, so answers never
+    // leak from an earlier PDF/Excel/Word file in the same chat.
+    clearLatestDocumentContext(activeConvId);
+    if (activeConvId) await deleteDocumentContextFromDB(activeConvId);
     setDocumentReadError(null);
     const filePath = `${Date.now()}_${file.name}`;
     const { error: uploadError } = await supabase.storage.from("chat-uploads").upload(filePath, file);
