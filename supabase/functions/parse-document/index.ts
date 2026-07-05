@@ -43,17 +43,19 @@ function extractXmlText(xml: string) {
 }
 
 function extractXmlTextWithBreaks(xml: string) {
-  return extractXmlText(
+  return xmlDecode(
     xml
       .replace(/<w:tab\s*\/>/g, "\t")
       .replace(/<w:br\s*\/>/g, "\n")
       .replace(/<\/w:tc>/g, " | ")
       .replace(/<\/w:tr>/g, "\n")
-      .replace(/<\/w:p>/g, "\n"),
+      .replace(/<\/w:p>/g, "\n")
+      .replace(/<[^>]+>/g, " "),
   )
     .replace(/\s*\|\s*/g, " | ")
     .replace(/\s*\n\s*/g, "\n")
     .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
