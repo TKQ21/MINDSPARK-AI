@@ -393,7 +393,7 @@ function streamSingleMessage(content: string) {
 
 function geminiDirectModel(id: string): string {
   switch (id) {
-    case "gemini-1.5-pro": return "gemini-2.5-flash";
+    case "gemini-1.5-pro": return "gemini-2.5-pro";
     case "gemini-2.0-flash": return "gemini-2.5-flash";
     case "gemini-1.5-flash":
     default: return "gemini-2.5-flash";
@@ -482,7 +482,7 @@ function toGeminiPayload(apiMessages: any[], hasDocContext: boolean) {
     generationConfig: {
       temperature: hasDocContext ? 0 : 0.7,
       topP: hasDocContext ? 0.1 : 0.95,
-      maxOutputTokens: hasDocContext ? 8192 : 4096,
+      maxOutputTokens: hasDocContext ? 16384 : 4096,
     },
   };
 }
@@ -525,7 +525,9 @@ async function callGatewayChat(apiMessages: any[], model: string, hasDocContext:
     });
   }
 
-  const models = [geminiGatewayId(model), "google/gemini-3-flash-preview", "google/gemini-2.5-flash"];
+  const models = hasDocContext
+    ? [geminiGatewayId(model), "google/gemini-3.1-pro-preview", "google/gemini-2.5-pro", "google/gemini-2.5-flash"]
+    : [geminiGatewayId(model), "google/gemini-3-flash-preview", "google/gemini-2.5-flash"];
   let lastError = "";
 
   for (const gatewayModel of [...new Set(models)]) {
@@ -540,7 +542,7 @@ async function callGatewayChat(apiMessages: any[], model: string, hasDocContext:
         model: gatewayModel,
         messages: apiMessages,
         temperature: hasDocContext ? 0 : 0.7,
-        max_tokens: hasDocContext ? 8192 : 4096,
+        max_tokens: hasDocContext ? 16384 : 4096,
         stream: true,
       }),
     });
@@ -774,7 +776,7 @@ serve(async (req) => {
           model,
           messages: apiMessages,
           temperature: hasDocContext ? 0 : 0.7,
-          max_tokens: hasDocContext ? 8192 : 4096,
+          max_tokens: hasDocContext ? 16384 : 4096,
           stream: true,
         }),
       });
