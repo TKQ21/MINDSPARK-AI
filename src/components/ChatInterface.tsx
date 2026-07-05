@@ -810,7 +810,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".pdf,.doc,.docx,.txt,.csv,.xlsx,.xls,.pptx,.ppt,.md,.json,.png,.jpg,.jpeg,.gif,.webp"
+                  accept=".pdf,.doc,.docx,.rtf,.odt,.txt,.md,.csv,.tsv,.xlsx,.xls,.xlsm,.ods,.ppt,.pptx,.odp,.json,.jsonl,.ndjson,.xml,.html,.htm,.yaml,.yml,.ini,.sql,.py,.js,.ts,.tsx,.jsx,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,.heic,.tif,.tiff"
                   onChange={(e) => { if (e.target.files?.[0]) handleFileUpload(e.target.files[0]); e.target.value = ""; }}
                   className="hidden"
                 />
