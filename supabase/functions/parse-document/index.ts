@@ -1,6 +1,7 @@
 import { encodeBase64 } from "jsr:@std/encoding@1.0.5/base64";
 import { getDocument } from "https://esm.sh/pdfjs-serverless@1.2.3";
 import JSZip from "https://esm.sh/jszip@3.10.1";
+import * as XLSX from "https://esm.sh/xlsx@0.18.5";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -9,7 +10,7 @@ const corsHeaders = {
 
 const unreadableFileMessage = "File received, but content could not be read. Please try re-uploading.";
 const MAX_FILE_MB = 100;
-const MAX_TEXT_CHARS = 650_000;
+const MAX_TEXT_CHARS = 2_000_000;
 
 function cleanText(text: string) {
   return text
@@ -39,6 +40,21 @@ function extractXmlText(xml: string) {
   while ((match = textNodePattern.exec(xml))) pieces.push(xmlDecode(match[1]));
   if (pieces.length) return pieces.join(" ").replace(/\s+/g, " ").trim();
   return xmlDecode(xml.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+}
+
+function extractXmlTextWithBreaks(xml: string) {
+  return extractXmlText(
+    xml
+      .replace(/<w:tab\s*\/>/g, "\t")
+      .replace(/<w:br\s*\/>/g, "\n")
+      .replace(/<\/w:tc>/g, " | ")
+      .replace(/<\/w:tr>/g, "\n")
+      .replace(/<\/w:p>/g, "\n"),
+  )
+    .replace(/\s*\|\s*/g, " | ")
+    .replace(/\s*\n\s*/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
 }
 
 function extractBinaryStrings(bytes: Uint8Array) {
@@ -253,17 +269,14 @@ async function parsePdfAccurately(bytes: Uint8Array, fileName: string) {
 
 async function parseDocx(bytes: Uint8Array) {
   const zip = await JSZip.loadAsync(bytes);
-  const files = Object.keys(zip.files).filter((name) => /^word\/(document|header\d+|footer\d+)\.xml$/.test(name));
+  const files = Object.keys(zip.files).filter((name) => /^word\/(document|header\d+|footer\d+|footnotes|endnotes)\.xml$/.test(name));
   const sections: string[] = [];
 
   for (const name of files) {
     const xml = await zip.file(name)?.async("text");
     if (!xml) continue;
-    const paragraphized = xml
-      .replace(/<\/w:tc>/g, " | ")
-      .replace(/<\/w:tr>/g, "\n")
-      .replace(/<\/w:p>/g, "\n");
-    sections.push(`## ${name}\n${extractXmlText(paragraphized)}`);
+    const text = extractXmlTextWithBreaks(xml);
+    if (text) sections.push(`## ${name}\n${text}`);
   }
 
   return cleanText(sections.join("\n\n"));
@@ -287,31 +300,45 @@ function markdownTable(rows: string[][]) {
 }
 
 async function parseXlsx(bytes: Uint8Array) {
-  const zip = await JSZip.loadAsync(bytes);
-  const sharedXml = await zip.file("xl/sharedStrings.xml")?.async("text");
-  const shared = sharedXml ? [...sharedXml.matchAll(/<si[\s\S]*?<\/si>/g)].map((m) => extractXmlText(m[0])) : [];
-  const sheetFiles = Object.keys(zip.files).filter((name) => /^xl\/worksheets\/sheet\d+\.xml$/.test(name)).sort();
+  const workbook = XLSX.read(bytes, { type: "array", cellDates: true, cellText: false, raw: false });
   const output: string[] = [];
 
-  for (const sheetName of sheetFiles) {
-    const xml = await zip.file(sheetName)?.async("text");
-    if (!xml) continue;
-    const rows: string[][] = [];
-    for (const rowMatch of xml.matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g)) {
-      const row: string[] = [];
-      for (const cellMatch of rowMatch[1].matchAll(/<c([^>]*)>([\s\S]*?)<\/c>/g)) {
-        const attrs = cellMatch[1];
-        const body = cellMatch[2];
-        const ref = attrs.match(/r="([A-Z]+\d+)"/i)?.[1] || `A${rows.length + 1}`;
-        const type = attrs.match(/t="([^"]+)"/)?.[1] || "";
-        const value = body.match(/<v>([\s\S]*?)<\/v>/)?.[1] ?? body.match(/<t[^>]*>([\s\S]*?)<\/t>/)?.[1] ?? "";
-        const resolved = type === "s" ? shared[Number(value)] || "" : xmlDecode(value);
-        row[columnIndex(ref)] = resolved;
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, defval: "", raw: false })
+      .map((row: any[]) => row.map((cell) => String(cell ?? "").trim()))
+      .filter((row: string[]) => row.some(Boolean));
+    if (!rows.length) continue;
+
+    const header = rows[0].some(Boolean) ? rows[0].map((h, i) => h || `Column ${i + 1}`) : rows[0].map((_, i) => `Column ${i + 1}`);
+    const body = rows.slice(1);
+    const summary: string[] = [
+      `## Sheet: ${sheetName}`,
+      `Total data rows (excluding header): ${body.length}`,
+      `Total columns: ${header.length}`,
+      `Columns: ${header.join(" | ")}`,
+    ];
+
+    const countableColumnLimit = Math.min(header.length, 40);
+    const valueCountLines: string[] = [];
+    for (let col = 0; col < countableColumnLimit; col++) {
+      const counts = new Map<string, number>();
+      for (const row of body) {
+        const value = (row[col] || "").trim();
+        if (!value) continue;
+        counts.set(value, (counts.get(value) || 0) + 1);
       }
-      rows.push(row);
+      const entries = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+      if (!entries.length) continue;
+      const allOrTop = entries.length <= 50 ? entries : entries.slice(0, 50);
+      valueCountLines.push(`- ${header[col]}: ${allOrTop.map(([value, count]) => `${value} = ${count}`).join("; ")}${entries.length > 50 ? "; ..." : ""}`);
     }
-    const sheetNo = sheetName.match(/sheet(\d+)/)?.[1] || "";
-    output.push(`## Sheet ${sheetNo}\n${markdownTable(rows)}`);
+
+    output.push([
+      ...summary,
+      valueCountLines.length ? `### Exact value counts by column\n${valueCountLines.join("\n")}` : "",
+      `### Full row data\n${markdownTable([["Row #", ...header], ...body.map((row, index) => [String(index + 1), ...row])])}`,
+    ].filter(Boolean).join("\n\n"));
   }
 
   return cleanText(output.join("\n\n"));
