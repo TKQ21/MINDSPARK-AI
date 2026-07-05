@@ -42,10 +42,9 @@ function expandQuery(question: string): string[] {
   return [...variants].filter((v) => v.trim().length > 0);
 }
 
-// Structure-aware chunking: keeps tables intact, groups sections by headings,
-// preserves paragraph context. Larger chunks (≈900 chars) with overlap so
-// related sentences stay together for semantic matching.
-function splitDocumentIntoChunks(text: string, chunkSize = 900, overlap = 150): string[] {
+// Structure-aware chunking: keeps sections and normal tables intact, but splits
+// huge Excel/CSV-style tables into row windows so 9k+ rows remain searchable.
+function splitDocumentIntoChunks(text: string, chunkSize = 2200, overlap = 250): string[] {
   const cleaned = text.replace(/\r/g, "").replace(/\n{3,}/g, "\n\n").trim();
   if (!cleaned) return [];
 
@@ -59,6 +58,27 @@ function splitDocumentIntoChunks(text: string, chunkSize = 900, overlap = 150): 
   const chunks: string[] = [];
   let buffer = "";
   let currentHeading = "";
+
+  const pushTableChunks = (block: string) => {
+    const lines = block.split("\n").filter(Boolean);
+    if (block.length <= chunkSize * 2 || lines.length <= 30) {
+      chunks.push(currentHeading ? `${currentHeading}\n\n${block}` : block);
+      return;
+    }
+
+    const headerLines = lines.slice(0, Math.min(2, lines.length));
+    const dataLines = lines.slice(headerLines.length);
+    const rowsPerChunk = 80;
+    for (let i = 0; i < dataLines.length; i += rowsPerChunk) {
+      const part = [
+        currentHeading,
+        `Table rows ${i + 1}-${Math.min(i + rowsPerChunk, dataLines.length)} of ${dataLines.length}`,
+        ...headerLines,
+        ...dataLines.slice(i, i + rowsPerChunk),
+      ].filter(Boolean).join("\n");
+      chunks.push(part);
+    }
+  };
 
   const flush = () => {
     const t = buffer.trim();
@@ -74,8 +94,7 @@ function splitDocumentIntoChunks(text: string, chunkSize = 900, overlap = 150): 
     // Tables and headings: keep whole and never split
     if (isTableBlock(block)) {
       if (buffer.trim()) flush();
-      const tableWithCtx = currentHeading ? `${currentHeading}\n\n${block}` : block;
-      chunks.push(tableWithCtx);
+      pushTableChunks(block);
       buffer = "";
       continue;
     }
@@ -128,6 +147,10 @@ function scoreChunk(chunk: string, query: string, queryTerms: string[]): number 
   if (/table|chart|figure|page|section|dashboard|metric|list|summary|note|subject|paper|topic|chapter|syllabus|marks|grade/i.test(query) &&
       /\||table|chart|figure|page|section|dashboard|metric|list|subject|paper|topic|chapter|marks/i.test(chunk)) {
     score += 8;
+  }
+
+  if (/count|kitn|total|rows?|rating|stars?|frequency|value/i.test(query) && /Exact value counts|Total data rows|Full row data|Sheet:/i.test(chunk)) {
+    score += 18;
   }
 
   // If chunk is a table and query terms appear in it, boost
@@ -200,12 +223,20 @@ function pickRelevantChunks(
 
   const ranked = [...scored].sort((a, b) => b.score - a.score);
 
-  const TOP_K = 18;
-  const MAX_CHARS = 18000;
+  const TOP_K = 30;
+  const MAX_CHARS = 65000;
   const selected: Array<{ chunk: string; index: number; score: number }> = [];
   let totalChars = 0;
 
+  for (const item of scored) {
+    if (/^(## Sheet:|Total data rows|Columns:|### Exact value counts by column)/im.test(item.chunk)) {
+      selected.push({ ...item, score: Math.max(item.score, 50) });
+      totalChars += item.chunk.length;
+    }
+  }
+
   for (const item of ranked) {
+    if (selected.some((s) => s.index === item.index)) continue;
     if (!genericDocumentRequest && !semantic.wantsTable && item.score <= 0) continue;
     if (totalChars + item.chunk.length > MAX_CHARS && selected.length > 0) continue;
     selected.push(item);
@@ -226,7 +257,7 @@ function buildRetrievedContext(chunks: Array<{ chunk: string; index: number; sco
     .join("\n\n---\n\n");
 }
 
-const FULL_DOCUMENT_CONTEXT_LIMIT = 100_000;
+const FULL_DOCUMENT_CONTEXT_LIMIT = 260_000;
 
 function buildFullDocumentContext(documentContext: string): string {
   return `### Full Uploaded Document\n${documentContext}`;
@@ -362,7 +393,7 @@ function streamSingleMessage(content: string) {
 
 function geminiDirectModel(id: string): string {
   switch (id) {
-    case "gemini-1.5-pro": return "gemini-2.5-flash";
+    case "gemini-1.5-pro": return "gemini-2.5-pro";
     case "gemini-2.0-flash": return "gemini-2.5-flash";
     case "gemini-1.5-flash":
     default: return "gemini-2.5-flash";
@@ -451,7 +482,7 @@ function toGeminiPayload(apiMessages: any[], hasDocContext: boolean) {
     generationConfig: {
       temperature: hasDocContext ? 0 : 0.7,
       topP: hasDocContext ? 0.1 : 0.95,
-      maxOutputTokens: hasDocContext ? 8192 : 4096,
+      maxOutputTokens: hasDocContext ? 16384 : 4096,
     },
   };
 }
@@ -494,7 +525,9 @@ async function callGatewayChat(apiMessages: any[], model: string, hasDocContext:
     });
   }
 
-  const models = [geminiGatewayId(model), "google/gemini-3-flash-preview", "google/gemini-2.5-flash"];
+  const models = hasDocContext
+    ? [geminiGatewayId(model), "google/gemini-3.1-pro-preview", "google/gemini-2.5-pro", "google/gemini-2.5-flash"]
+    : [geminiGatewayId(model), "google/gemini-3-flash-preview", "google/gemini-2.5-flash"];
   let lastError = "";
 
   for (const gatewayModel of [...new Set(models)]) {
@@ -509,7 +542,7 @@ async function callGatewayChat(apiMessages: any[], model: string, hasDocContext:
         model: gatewayModel,
         messages: apiMessages,
         temperature: hasDocContext ? 0 : 0.7,
-        max_tokens: hasDocContext ? 8192 : 4096,
+        max_tokens: hasDocContext ? 16384 : 4096,
         stream: true,
       }),
     });
@@ -743,7 +776,7 @@ serve(async (req) => {
           model,
           messages: apiMessages,
           temperature: hasDocContext ? 0 : 0.7,
-          max_tokens: hasDocContext ? 8192 : 4096,
+          max_tokens: hasDocContext ? 16384 : 4096,
           stream: true,
         }),
       });

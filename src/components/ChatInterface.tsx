@@ -155,6 +155,8 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       .from("conversation_documents")
       .select("file_name,extracted_text")
       .eq("conversation_id", conversationId)
+      .order("updated_at", { ascending: false })
+      .limit(1)
       .maybeSingle();
     if (docRes.data?.extracted_text) {
       setLatestDocumentContext(conversationId, docRes.data.extracted_text);
@@ -204,14 +206,24 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     });
   };
 
+  const deleteDocumentContextFromDB = async (convId: string) => {
+    if (!userId) return;
+    await (supabase as any)
+      .from("conversation_documents")
+      .delete()
+      .eq("conversation_id", convId)
+      .eq("user_id", userId);
+  };
+
   const saveDocumentContextToDB = async (convId: string, fileName: string, extractedText: string) => {
     if (!userId || !extractedText.trim()) return;
-    await (supabase as any).from("conversation_documents").upsert({
+    await deleteDocumentContextFromDB(convId);
+    await (supabase as any).from("conversation_documents").insert({
       conversation_id: convId,
       user_id: userId,
       file_name: fileName || "Uploaded document",
       extracted_text: extractedText,
-    }, { onConflict: "conversation_id" });
+    });
   };
 
   const getFunctionHeaders = async () => {
@@ -308,6 +320,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       return;
     }
     // No document upload limit for any user (free or pro).
+    // New upload replaces the old document context completely, so answers never
+    // leak from an earlier PDF/Excel/Word file in the same chat.
+    clearLatestDocumentContext(activeConvId);
+    if (activeConvId) await deleteDocumentContextFromDB(activeConvId);
     setDocumentReadError(null);
     const filePath = `${Date.now()}_${file.name}`;
     const { error: uploadError } = await supabase.storage.from("chat-uploads").upload(filePath, file);
@@ -356,7 +372,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
 
   const handleStreamChat = async (allMessages: Message[], convId: string, docCtx: string | null) => {
     try {
-      const apiMessages = allMessages.map((m) => ({ role: m.role, content: m.content }));
+      const messagesForModel = docCtx
+        ? allMessages.slice(Math.max(0, allMessages.map((m, index) => (m.role === "user" && m.fileName ? index : -1)).filter((index) => index >= 0).pop() ?? 0))
+        : allMessages;
+      const apiMessages = messagesForModel.map((m) => ({ role: m.role, content: m.content }));
       const body: any = { messages: apiMessages, model: resolveModel(selectedModel, usage.isPro), isPro: usage.isPro };
       if (docCtx) body.documentContext = docCtx;
 
@@ -639,7 +658,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
               <span className="ml-2 text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-400/20 text-emerald-300 flex items-center gap-1">
                 <FileText className="w-3 h-3" /> Doc attached
                 <button
-                  onClick={() => { clearLatestDocumentContext(activeConvId); setDocumentReadError(null); }}
+                    onClick={() => { clearLatestDocumentContext(activeConvId); if (activeConvId) void deleteDocumentContextFromDB(activeConvId); setDocumentReadError(null); }}
                   className="ml-1 hover:text-rose-300"
                 >
                   ✕
@@ -734,7 +753,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
                 <span className="text-slate-400 text-xs">— What should I do with it?</span>
               )}
               <button
-                onClick={() => { setUploadedFile(null); setDocumentReadError(null); clearLatestDocumentContext(activeConvId); }}
+                onClick={() => { setUploadedFile(null); setDocumentReadError(null); clearLatestDocumentContext(activeConvId); if (activeConvId) void deleteDocumentContextFromDB(activeConvId); }}
                 className="ml-auto text-slate-400 hover:text-rose-300 text-xs"
               >
                 ✕
@@ -791,7 +810,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".pdf,.doc,.docx,.txt,.csv,.xlsx,.xls,.pptx,.ppt,.md,.json,.png,.jpg,.jpeg,.gif,.webp"
+                  accept=".pdf,.doc,.docx,.rtf,.odt,.txt,.md,.csv,.tsv,.xlsx,.xls,.xlsm,.ods,.ppt,.pptx,.odp,.json,.jsonl,.ndjson,.xml,.html,.htm,.yaml,.yml,.ini,.sql,.py,.js,.ts,.tsx,.jsx,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg,.heic,.tif,.tiff"
                   onChange={(e) => { if (e.target.files?.[0]) handleFileUpload(e.target.files[0]); e.target.value = ""; }}
                   className="hidden"
                 />
