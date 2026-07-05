@@ -79,7 +79,8 @@ async function parsePdf(bytes: Uint8Array) {
     const content = await page.getTextContent({ includeMarkedContent: true, disableNormalization: false });
     const rows = new Map<number, Array<{ x: number; text: string }>>();
 
-    for (const item of content.items || []) {
+    for (const rawItem of content.items || []) {
+      const item = rawItem as any;
       const text = String(item.str || "").trim();
       if (!text) continue;
       const transform = item.transform || [0, 0, 0, 0, 0, 0];
