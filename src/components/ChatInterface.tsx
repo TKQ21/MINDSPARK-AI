@@ -658,7 +658,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
               <span className="ml-2 text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-400/20 text-emerald-300 flex items-center gap-1">
                 <FileText className="w-3 h-3" /> Doc attached
                 <button
-                  onClick={() => { clearLatestDocumentContext(activeConvId); setDocumentReadError(null); }}
+                    onClick={() => { clearLatestDocumentContext(activeConvId); if (activeConvId) void deleteDocumentContextFromDB(activeConvId); setDocumentReadError(null); }}
                   className="ml-1 hover:text-rose-300"
                 >
                   ✕
@@ -753,7 +753,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
                 <span className="text-slate-400 text-xs">— What should I do with it?</span>
               )}
               <button
-                onClick={() => { setUploadedFile(null); setDocumentReadError(null); clearLatestDocumentContext(activeConvId); }}
+                onClick={() => { setUploadedFile(null); setDocumentReadError(null); clearLatestDocumentContext(activeConvId); if (activeConvId) void deleteDocumentContextFromDB(activeConvId); }}
                 className="ml-auto text-slate-400 hover:text-rose-300 text-xs"
               >
                 ✕
