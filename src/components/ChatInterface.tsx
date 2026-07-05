@@ -372,7 +372,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
 
   const handleStreamChat = async (allMessages: Message[], convId: string, docCtx: string | null) => {
     try {
-      const apiMessages = allMessages.map((m) => ({ role: m.role, content: m.content }));
+      const messagesForModel = docCtx
+        ? allMessages.slice(Math.max(0, allMessages.map((m, index) => (m.role === "user" && m.fileName ? index : -1)).filter((index) => index >= 0).pop() ?? 0))
+        : allMessages;
+      const apiMessages = messagesForModel.map((m) => ({ role: m.role, content: m.content }));
       const body: any = { messages: apiMessages, model: resolveModel(selectedModel, usage.isPro), isPro: usage.isPro };
       if (docCtx) body.documentContext = docCtx;
 
