@@ -829,6 +829,11 @@ serve(async (req) => {
 
     if (hasDocContext) {
       const latestQuestion = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
+      const deterministicAnswer =
+        tryAnswerPositionQuestion(latestQuestion, documentContext) ||
+        tryAnswerExactValueCount(latestQuestion, documentContext);
+      if (deterministicAnswer) return streamSingleMessage(deterministicAnswer);
+
       // For follow-ups like "explain in hindi" or "aur detail do", combine
       // the last few user turns so retrieval reuses prior topic keywords.
       const recentUserTurns = messages
@@ -848,7 +853,7 @@ serve(async (req) => {
 
       apiMessages.push({
         role: "system",
-        content: `[Context — ${useFullDocument ? "FULL uploaded document text" : "Relevant document excerpts because the full text is over 100,000 characters"}]\n\n${contextForPrompt}\n\n[Instructions]\nAnswer the user's question using ONLY the document context above, but answer DEEPLY and THOROUGHLY — do NOT truncate. Explain in detail, use headings/subheadings/bullets/tables, quote every relevant excerpt verbatim, and cover every angle the context supports (definitions, examples, comparisons, edge cases). Tables (lines with \`|\`) are real data — read every row carefully and quote values verbatim. For numeric answers, find the exact matching row/line and answer with the exact number. Handle follow-ups naturally: if the user asks to "explain in Hindi", "aur detail do", "summarize", "list points", etc., re-answer the SAME prior topic from the context in that requested style. End the answer with a LOCATION-ONLY citation like "📌 Source: Chunk #3, Page 4, Paragraph 7" — do NOT repeat the quoted row/line as the source. If after careful reading the exact information truly does not appear, reply exactly: **Maine is document mein yeh data nahi paaya. Document mein jo data hai wo hai:** and list the closest explicit labels/rows actually present.`,
+        content: `[Context — ${useFullDocument ? "FULL uploaded document text" : "Relevant document excerpts because the full text is very large"}]\n\n${contextForPrompt}\n\n[Instructions]\nAnswer using ONLY the current uploaded document context above. Current upload fully replaces older documents. Prioritize exact document evidence over conversation history. Answer deeply, accurately, and in the user's same language. Tables with \`|\` are real data: read row labels and values verbatim. For numeric/count questions, first use "Exact value counts by column" and "Numeric statistics by column". For word/character/line-position questions, use explicit "Line N" and "Word positions" markers if present. If exact information is missing, reply: **Yeh specific information document mein nahi mili. Document mein jo data mila:** and list closest explicit rows/labels. End with confidence (✅ High / ⚠️ Medium / ❌ Not found) and a location-only citation like "📌 Source: Chunk #3, Page 4, Paragraph 7".`,
       });
     }
 
@@ -871,7 +876,7 @@ serve(async (req) => {
           model,
           messages: apiMessages,
           temperature: hasDocContext ? 0 : 0.7,
-          max_tokens: hasDocContext ? 16384 : 4096,
+          max_tokens: hasDocContext ? DOCUMENT_OUTPUT_TOKENS : 4096,
           stream: true,
         }),
       });
