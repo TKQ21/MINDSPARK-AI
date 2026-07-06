@@ -10,7 +10,7 @@ const corsHeaders = {
 
 const unreadableFileMessage = "File received, but content could not be read. Please try re-uploading.";
 const MAX_FILE_MB = 100;
-const MAX_TEXT_CHARS = 2_000_000;
+const MAX_TEXT_CHARS = 5_000_000;
 
 function cleanText(text: string) {
   return text
@@ -270,14 +270,76 @@ async function parsePdfAccurately(bytes: Uint8Array, fileName: string) {
   }
 }
 
+function extractWordTextInOrder(xml: string) {
+  const pieces: string[] = [];
+  const pattern = /<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>|<w:tab\s*\/>|<w:br\s*\/>/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(xml))) {
+    if (match[0].startsWith("<w:tab")) pieces.push("\t");
+    else if (match[0].startsWith("<w:br")) pieces.push("\n");
+    else pieces.push(xmlDecode(match[1] || ""));
+  }
+  return pieces.join("").replace(/[ \t]{2,}/g, " ").replace(/\s+\n/g, "\n").trim();
+}
+
+function getDocxListPrefix(paragraphXml: string, counters: Map<string, number>) {
+  const numId = paragraphXml.match(/<w:numId\s+w:val="(\d+)"\s*\/>/)?.[1];
+  if (!numId) return "";
+  const level = paragraphXml.match(/<w:ilvl\s+w:val="(\d+)"\s*\/>/)?.[1] || "0";
+  const key = `${numId}:${level}`;
+  const next = (counters.get(key) || 0) + 1;
+  counters.set(key, next);
+  for (const existing of [...counters.keys()]) {
+    const [existingNum, existingLevel] = existing.split(":");
+    if (existingNum === numId && Number(existingLevel) > Number(level)) counters.delete(existing);
+  }
+  return `${next}. `;
+}
+
+function buildWordIndex(line: string) {
+  const normalized = line.replace(/^\s*(?:Line\s+\d+\s*:\s*)?(?:Q(?:uestion)?\s*)?\(?\d+\)?[.)\-:]?\s*/i, "").trim();
+  const words = normalized.split(/\s+/).filter(Boolean);
+  if (!words.length || words.length > 80) return "";
+  return `Word positions: ${words.map((word, index) => `${index + 1}=${word}`).join(" | ")}`;
+}
+
 async function parseDocx(bytes: Uint8Array) {
   const zip = await JSZip.loadAsync(bytes);
   const files = Object.keys(zip.files).filter((name) => /^word\/(document|header\d+|footer\d+|footnotes|endnotes)\.xml$/.test(name));
   const sections: string[] = [];
+  const counters = new Map<string, number>();
+  let lineNo = 1;
 
   for (const name of files) {
     const xml = await zip.file(name)?.async("text");
     if (!xml) continue;
+
+    if (name === "word/document.xml") {
+      const blocks = xml.match(/<w:(?:p|tbl)[\s\S]*?<\/w:(?:p|tbl)>/g) || [];
+      const lines: string[] = [];
+      for (const block of blocks) {
+        if (block.startsWith("<w:tbl")) {
+          const rowXml = block.match(/<w:tr[\s\S]*?<\/w:tr>/g) || [];
+          for (const row of rowXml) {
+            const cells = (row.match(/<w:tc[\s\S]*?<\/w:tc>/g) || [])
+              .map((cell) => extractWordTextInOrder(cell).replace(/\s+/g, " ").trim())
+              .filter(Boolean);
+            if (cells.length) lines.push(`Line ${lineNo++}: | ${cells.join(" | ")} |`);
+          }
+          continue;
+        }
+        const text = extractWordTextInOrder(block).replace(/\s+/g, " ").trim();
+        if (!text) continue;
+        const prefix = getDocxListPrefix(block, counters);
+        const line = `Line ${lineNo++}: ${prefix}${text}`;
+        lines.push(line);
+        const wordIndex = buildWordIndex(line);
+        if (wordIndex) lines.push(`  ${wordIndex}`);
+      }
+      if (lines.length) sections.push(`## Main document text with exact line numbers\n${lines.join("\n")}`);
+      continue;
+    }
+
     const text = extractXmlTextWithBreaks(xml);
     if (text) sections.push(`## ${name}\n${text}`);
   }
@@ -295,15 +357,64 @@ function columnIndex(ref: string) {
 function markdownTable(rows: string[][]) {
   const useful = rows.filter((r) => r.some((c) => c.trim()));
   if (!useful.length) return "";
-  const width = Math.min(40, Math.max(...useful.map((r) => r.length)));
+  const width = Math.max(...useful.map((r) => r.length));
   const normalized = useful.map((r) => Array.from({ length: width }, (_, i) => (r[i] || "").replace(/\|/g, "/").trim()));
   const header = normalized[0].some(Boolean) ? normalized[0] : normalized[0].map((_, i) => `Column ${i + 1}`);
   const body = normalized.slice(1);
   return [`| ${header.join(" | ")} |`, `| ${header.map(() => "---").join(" | ")} |`, ...body.map((r) => `| ${r.join(" | ")} |`)].join("\n");
 }
 
+function numberStats(values: string[]) {
+  const nums = values
+    .map((value) => Number(String(value).replace(/[%,$₹€£\s]/g, "").replace(/,/g, "")))
+    .filter((value) => Number.isFinite(value));
+  if (!nums.length) return "";
+  const min = Math.min(...nums);
+  const max = Math.max(...nums);
+  const avg = nums.reduce((sum, value) => sum + value, 0) / nums.length;
+  return `count=${nums.length}; min=${min}; max=${max}; average=${Number(avg.toFixed(6))}`;
+}
+
+function structuredRowsToMarkdown(title: string, rows: string[][]) {
+  const useful = rows
+    .map((row) => row.map((cell) => String(cell ?? "").trim()))
+    .filter((row) => row.some(Boolean));
+  if (!useful.length) return "";
+
+  const maxCols = Math.max(...useful.map((row) => row.length));
+  const normalized = useful.map((row) => Array.from({ length: maxCols }, (_, index) => row[index] || ""));
+  const header = normalized[0].some(Boolean) ? normalized[0].map((h, i) => h || `Column ${i + 1}`) : Array.from({ length: maxCols }, (_, i) => `Column ${i + 1}`);
+  const body = normalized.slice(1);
+
+  const valueCountLines: string[] = [];
+  const statsLines: string[] = [];
+  for (let col = 0; col < Math.min(header.length, 60); col++) {
+    const columnValues = body.map((row) => (row[col] || "").trim()).filter(Boolean);
+    const counts = new Map<string, number>();
+    for (const value of columnValues) counts.set(value, (counts.get(value) || 0) + 1);
+    const entries = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    if (entries.length) {
+      const allOrTop = entries.length <= 100 ? entries : entries.slice(0, 100);
+      valueCountLines.push(`- ${header[col]}: ${allOrTop.map(([value, count]) => `${value} = ${count}`).join("; ")}${entries.length > 100 ? "; ..." : ""}`);
+    }
+    const stats = numberStats(columnValues);
+    if (stats) statsLines.push(`- ${header[col]}: ${stats}`);
+  }
+
+  const exactRows = body.map((row, index) => [`Row ${index + 1}`, ...row]);
+  return cleanText([
+    `## Sheet: ${title}`,
+    `Total data rows (excluding header): ${body.length}`,
+    `Total columns: ${header.length}`,
+    `Columns: ${header.join(" | ")}`,
+    statsLines.length ? `### Numeric statistics by column\n${statsLines.join("\n")}` : "",
+    valueCountLines.length ? `### Exact value counts by column\n${valueCountLines.join("\n")}` : "",
+    `### Full row data — every parsed row preserved\n${markdownTable([["Row #", ...header], ...exactRows])}`,
+  ].filter(Boolean).join("\n\n"));
+}
+
 async function parseXlsx(bytes: Uint8Array) {
-  const workbook = XLSX.read(bytes, { type: "array", cellDates: true, cellText: false, raw: false });
+  const workbook = XLSX.read(bytes, { type: "array", cellDates: true, cellFormula: true, cellText: false, raw: false, WTF: false });
   const output: string[] = [];
 
   for (const sheetName of workbook.SheetNames) {
@@ -312,36 +423,7 @@ async function parseXlsx(bytes: Uint8Array) {
       .map((row: any[]) => row.map((cell) => String(cell ?? "").trim()))
       .filter((row: string[]) => row.some(Boolean));
     if (!rows.length) continue;
-
-    const header = rows[0].some(Boolean) ? rows[0].map((h, i) => h || `Column ${i + 1}`) : rows[0].map((_, i) => `Column ${i + 1}`);
-    const body = rows.slice(1);
-    const summary: string[] = [
-      `## Sheet: ${sheetName}`,
-      `Total data rows (excluding header): ${body.length}`,
-      `Total columns: ${header.length}`,
-      `Columns: ${header.join(" | ")}`,
-    ];
-
-    const countableColumnLimit = Math.min(header.length, 40);
-    const valueCountLines: string[] = [];
-    for (let col = 0; col < countableColumnLimit; col++) {
-      const counts = new Map<string, number>();
-      for (const row of body) {
-        const value = (row[col] || "").trim();
-        if (!value) continue;
-        counts.set(value, (counts.get(value) || 0) + 1);
-      }
-      const entries = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-      if (!entries.length) continue;
-      const allOrTop = entries.length <= 50 ? entries : entries.slice(0, 50);
-      valueCountLines.push(`- ${header[col]}: ${allOrTop.map(([value, count]) => `${value} = ${count}`).join("; ")}${entries.length > 50 ? "; ..." : ""}`);
-    }
-
-    output.push([
-      ...summary,
-      valueCountLines.length ? `### Exact value counts by column\n${valueCountLines.join("\n")}` : "",
-      `### Full row data\n${markdownTable([["Row #", ...header], ...body.map((row, index) => [String(index + 1), ...row])])}`,
-    ].filter(Boolean).join("\n\n"));
+    output.push(structuredRowsToMarkdown(sheetName, rows));
   }
 
   return cleanText(output.join("\n\n"));
@@ -352,7 +434,11 @@ async function parseXlsx(bytes: Uint8Array) {
 // gets "Exact value counts" + full row data with accurate totals.
 function csvLikeToStructured(raw: string, fileName: string): string {
   const text = raw.replace(/^\uFEFF/, "");
-  const delimiter = text.includes("\t") && !text.includes(",") ? "\t" : ",";
+  const sample = text.split(/\r?\n/).slice(0, 20).join("\n");
+  const candidates = ["\t", ",", ";", "|"];
+  const delimiter = candidates
+    .map((candidate) => ({ candidate, score: sample.split(candidate).length - 1 }))
+    .sort((a, b) => b.score - a.score)[0]?.candidate || ",";
   const parseLine = (line: string): string[] => {
     const out: string[] = [];
     let cur = "";
@@ -374,36 +460,7 @@ function csvLikeToStructured(raw: string, fileName: string): string {
   };
   const rows = text.split(/\r?\n/).filter((l) => l.length > 0).map(parseLine).filter((r) => r.some(Boolean));
   if (!rows.length) return raw.slice(0, MAX_TEXT_CHARS);
-
-  const header = rows[0].some(Boolean) ? rows[0].map((h, i) => h || `Column ${i + 1}`) : rows[0].map((_, i) => `Column ${i + 1}`);
-  const body = rows.slice(1);
-  const summary: string[] = [
-    `## Sheet: ${fileName}`,
-    `Total data rows (excluding header): ${body.length}`,
-    `Total columns: ${header.length}`,
-    `Columns: ${header.join(" | ")}`,
-  ];
-
-  const countableColumnLimit = Math.min(header.length, 40);
-  const valueCountLines: string[] = [];
-  for (let col = 0; col < countableColumnLimit; col++) {
-    const counts = new Map<string, number>();
-    for (const row of body) {
-      const value = (row[col] || "").trim();
-      if (!value) continue;
-      counts.set(value, (counts.get(value) || 0) + 1);
-    }
-    const entries = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-    if (!entries.length) continue;
-    const allOrTop = entries.length <= 50 ? entries : entries.slice(0, 50);
-    valueCountLines.push(`- ${header[col]}: ${allOrTop.map(([value, count]) => `${value} = ${count}`).join("; ")}${entries.length > 50 ? "; ..." : ""}`);
-  }
-
-  return cleanText([
-    ...summary,
-    valueCountLines.length ? `### Exact value counts by column\n${valueCountLines.join("\n")}` : "",
-    `### Full row data\n${markdownTable([["Row #", ...header], ...body.map((row, index) => [String(index + 1), ...row])])}`,
-  ].filter(Boolean).join("\n\n"));
+  return structuredRowsToMarkdown(fileName, rows);
 }
 
 async function parsePptx(bytes: Uint8Array) {
