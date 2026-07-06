@@ -357,7 +357,7 @@ function columnIndex(ref: string) {
 function markdownTable(rows: string[][]) {
   const useful = rows.filter((r) => r.some((c) => c.trim()));
   if (!useful.length) return "";
-  const width = Math.min(40, Math.max(...useful.map((r) => r.length)));
+  const width = Math.max(...useful.map((r) => r.length));
   const normalized = useful.map((r) => Array.from({ length: width }, (_, i) => (r[i] || "").replace(/\|/g, "/").trim()));
   const header = normalized[0].some(Boolean) ? normalized[0] : normalized[0].map((_, i) => `Column ${i + 1}`);
   const body = normalized.slice(1);
@@ -437,7 +437,7 @@ function csvLikeToStructured(raw: string, fileName: string): string {
   const sample = text.split(/\r?\n/).slice(0, 20).join("\n");
   const candidates = ["\t", ",", ";", "|"];
   const delimiter = candidates
-    .map((candidate) => ({ candidate, score: (sample.match(new RegExp(`\\${candidate}`, "g")) || []).length }))
+    .map((candidate) => ({ candidate, score: sample.split(candidate).length - 1 }))
     .sort((a, b) => b.score - a.score)[0]?.candidate || ",";
   const parseLine = (line: string): string[] => {
     const out: string[] = [];
