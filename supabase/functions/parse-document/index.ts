@@ -10,7 +10,7 @@ const corsHeaders = {
 
 const unreadableFileMessage = "File received, but content could not be read. Please try re-uploading.";
 const MAX_FILE_MB = 100;
-const MAX_TEXT_CHARS = 2_000_000;
+const MAX_TEXT_CHARS = 5_000_000;
 
 function cleanText(text: string) {
   return text
@@ -270,14 +270,76 @@ async function parsePdfAccurately(bytes: Uint8Array, fileName: string) {
   }
 }
 
+function extractWordTextInOrder(xml: string) {
+  const pieces: string[] = [];
+  const pattern = /<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>|<w:tab\s*\/>|<w:br\s*\/>/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(xml))) {
+    if (match[0].startsWith("<w:tab")) pieces.push("\t");
+    else if (match[0].startsWith("<w:br")) pieces.push("\n");
+    else pieces.push(xmlDecode(match[1] || ""));
+  }
+  return pieces.join("").replace(/[ \t]{2,}/g, " ").replace(/\s+\n/g, "\n").trim();
+}
+
+function getDocxListPrefix(paragraphXml: string, counters: Map<string, number>) {
+  const numId = paragraphXml.match(/<w:numId\s+w:val="(\d+)"\s*\/>/)?.[1];
+  if (!numId) return "";
+  const level = paragraphXml.match(/<w:ilvl\s+w:val="(\d+)"\s*\/>/)?.[1] || "0";
+  const key = `${numId}:${level}`;
+  const next = (counters.get(key) || 0) + 1;
+  counters.set(key, next);
+  for (const existing of [...counters.keys()]) {
+    const [existingNum, existingLevel] = existing.split(":");
+    if (existingNum === numId && Number(existingLevel) > Number(level)) counters.delete(existing);
+  }
+  return `${next}. `;
+}
+
+function buildWordIndex(line: string) {
+  const normalized = line.replace(/^\s*(?:Line\s+\d+\s*:\s*)?(?:Q(?:uestion)?\s*)?\(?\d+\)?[.)\-:]?\s*/i, "").trim();
+  const words = normalized.split(/\s+/).filter(Boolean);
+  if (!words.length || words.length > 80) return "";
+  return `Word positions: ${words.map((word, index) => `${index + 1}=${word}`).join(" | ")}`;
+}
+
 async function parseDocx(bytes: Uint8Array) {
   const zip = await JSZip.loadAsync(bytes);
   const files = Object.keys(zip.files).filter((name) => /^word\/(document|header\d+|footer\d+|footnotes|endnotes)\.xml$/.test(name));
   const sections: string[] = [];
+  const counters = new Map<string, number>();
+  let lineNo = 1;
 
   for (const name of files) {
     const xml = await zip.file(name)?.async("text");
     if (!xml) continue;
+
+    if (name === "word/document.xml") {
+      const blocks = xml.match(/<w:(?:p|tbl)[\s\S]*?<\/w:(?:p|tbl)>/g) || [];
+      const lines: string[] = [];
+      for (const block of blocks) {
+        if (block.startsWith("<w:tbl")) {
+          const rowXml = block.match(/<w:tr[\s\S]*?<\/w:tr>/g) || [];
+          for (const row of rowXml) {
+            const cells = (row.match(/<w:tc[\s\S]*?<\/w:tc>/g) || [])
+              .map((cell) => extractWordTextInOrder(cell).replace(/\s+/g, " ").trim())
+              .filter(Boolean);
+            if (cells.length) lines.push(`Line ${lineNo++}: | ${cells.join(" | ")} |`);
+          }
+          continue;
+        }
+        const text = extractWordTextInOrder(block).replace(/\s+/g, " ").trim();
+        if (!text) continue;
+        const prefix = getDocxListPrefix(block, counters);
+        const line = `Line ${lineNo++}: ${prefix}${text}`;
+        lines.push(line);
+        const wordIndex = buildWordIndex(line);
+        if (wordIndex) lines.push(`  ${wordIndex}`);
+      }
+      if (lines.length) sections.push(`## Main document text with exact line numbers\n${lines.join("\n")}`);
+      continue;
+    }
+
     const text = extractXmlTextWithBreaks(xml);
     if (text) sections.push(`## ${name}\n${text}`);
   }
