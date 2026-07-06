@@ -10,6 +10,8 @@ import {
   Menu,
   Sparkles,
   PanelRight,
+  Brain,
+  TableProperties,
 } from "lucide-react";
 import { motion } from "framer-motion";
 import MessageBubble, { Message } from "./MessageBubble";
@@ -547,6 +549,25 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     }
   };
 
+  const handleDeepAnalysis = () => {
+    handleSend(`Deep Analysis Mode: Is uploaded document ka expert-level structured report banao.
+
+Include:
+1. Executive Summary — 5 key findings
+2. All Metrics Table — document mein jo bhi numbers/percentages/counts hain
+3. Tables/Rows ka exact analysis
+4. Trends & Patterns
+5. Anomalies / unusual points
+6. Recommendations
+7. Suggested follow-up questions
+
+Rules: Sirf uploaded document se answer do, exact values quote karo, hallucinate mat karo, aur same language/Hinglish mein answer do.`);
+  };
+
+  const handleShowExtractedData = () => {
+    handleSend("Uploaded document mein jo bhi extracted tables, rows, metrics, counts, numbers, percentages aur exact values hain unhe clean markdown table/list mein dikhao. Sirf document se answer do.");
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); }
   };
@@ -720,7 +741,9 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
                     <div className="rounded-2xl px-4 py-3 bg-white/[0.04] border border-white/10 backdrop-blur-xl">
                       <div className="flex items-center gap-2 text-sm">
                         <span className="typing-star">✦</span>
-                        <span className="text-blue-300 font-medium">MindSpark is typing</span>
+                        <span className="text-blue-300 font-medium">
+                          {documentContext ? "🧠 Deep analysis ho rahi hai" : "MindSpark is typing"}
+                        </span>
                         <span className="flex gap-0.5">
                           <span className="w-1 h-1 rounded-full bg-blue-400 animate-pulse" />
                           <span className="w-1 h-1 rounded-full bg-blue-400 animate-pulse" style={{ animationDelay: "0.2s" }} />
@@ -745,12 +768,12 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
               <span className="text-slate-100 truncate">{uploadedFile.name}</span>
               {isParsingDoc ? (
                 <span className="text-slate-400 text-xs flex items-center gap-1">
-                  <Loader2 className="w-3 h-3 animate-spin" /> Analyzing...
+                  <Loader2 className="w-3 h-3 animate-spin" /> 📖 Document pad raha hai...
                 </span>
               ) : documentReadError ? (
                 <span className="text-rose-300 text-xs">— {documentReadError}</span>
               ) : (
-                <span className="text-slate-400 text-xs">— What should I do with it?</span>
+                <span className="text-emerald-300 text-xs">— ✓ Fully analyzed by AI</span>
               )}
               <button
                 onClick={() => { setUploadedFile(null); setDocumentReadError(null); clearLatestDocumentContext(activeConvId); if (activeConvId) void deleteDocumentContextFromDB(activeConvId); }}
@@ -765,6 +788,26 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
         {/* Input area */}
         <div className="border-t border-white/5 bg-white/[0.02] backdrop-blur-xl p-4">
           <div className="max-w-3xl mx-auto">
+            {documentContext && !documentReadError && (
+              <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-emerald-400/20 bg-emerald-500/10 px-3 py-2 text-xs text-slate-200">
+                <FileText className="h-4 w-4 text-emerald-300" />
+                <span className="font-medium text-emerald-200">Document mode active</span>
+                <button
+                  onClick={handleDeepAnalysis}
+                  disabled={isLoading || isParsingDoc}
+                  className="ml-auto inline-flex items-center gap-1 rounded-lg border border-blue-400/25 bg-blue-500/15 px-2.5 py-1 text-blue-100 transition-all hover:bg-blue-500/25 disabled:opacity-40"
+                >
+                  <Brain className="h-3.5 w-3.5" /> Deep Analysis
+                </button>
+                <button
+                  onClick={handleShowExtractedData}
+                  disabled={isLoading || isParsingDoc}
+                  className="inline-flex items-center gap-1 rounded-lg border border-cyan-400/25 bg-cyan-500/10 px-2.5 py-1 text-cyan-100 transition-all hover:bg-cyan-500/20 disabled:opacity-40"
+                >
+                  <TableProperties className="h-3.5 w-3.5" /> Data Table
+                </button>
+              </div>
+            )}
             {/* Quick prompts */}
             {messages.length === 0 && (
               <div className="flex flex-wrap gap-1.5 mb-3 justify-center">
