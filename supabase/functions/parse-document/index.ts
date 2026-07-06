@@ -347,6 +347,65 @@ async function parseXlsx(bytes: Uint8Array) {
   return cleanText(output.join("\n\n"));
 }
 
+// Parse CSV/TSV text (or a .xls that is actually a CSV) into the same
+// summarized structure that parseXlsx produces, so downstream chat retrieval
+// gets "Exact value counts" + full row data with accurate totals.
+function csvLikeToStructured(raw: string, fileName: string): string {
+  const text = raw.replace(/^\uFEFF/, "");
+  const delimiter = text.includes("\t") && !text.includes(",") ? "\t" : ",";
+  const parseLine = (line: string): string[] => {
+    const out: string[] = [];
+    let cur = "";
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQuotes) {
+        if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+        else if (ch === '"') inQuotes = false;
+        else cur += ch;
+      } else {
+        if (ch === '"') inQuotes = true;
+        else if (ch === delimiter) { out.push(cur); cur = ""; }
+        else cur += ch;
+      }
+    }
+    out.push(cur);
+    return out.map((c) => c.trim());
+  };
+  const rows = text.split(/\r?\n/).filter((l) => l.length > 0).map(parseLine).filter((r) => r.some(Boolean));
+  if (!rows.length) return raw.slice(0, MAX_TEXT_CHARS);
+
+  const header = rows[0].some(Boolean) ? rows[0].map((h, i) => h || `Column ${i + 1}`) : rows[0].map((_, i) => `Column ${i + 1}`);
+  const body = rows.slice(1);
+  const summary: string[] = [
+    `## Sheet: ${fileName}`,
+    `Total data rows (excluding header): ${body.length}`,
+    `Total columns: ${header.length}`,
+    `Columns: ${header.join(" | ")}`,
+  ];
+
+  const countableColumnLimit = Math.min(header.length, 40);
+  const valueCountLines: string[] = [];
+  for (let col = 0; col < countableColumnLimit; col++) {
+    const counts = new Map<string, number>();
+    for (const row of body) {
+      const value = (row[col] || "").trim();
+      if (!value) continue;
+      counts.set(value, (counts.get(value) || 0) + 1);
+    }
+    const entries = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    if (!entries.length) continue;
+    const allOrTop = entries.length <= 50 ? entries : entries.slice(0, 50);
+    valueCountLines.push(`- ${header[col]}: ${allOrTop.map(([value, count]) => `${value} = ${count}`).join("; ")}${entries.length > 50 ? "; ..." : ""}`);
+  }
+
+  return cleanText([
+    ...summary,
+    valueCountLines.length ? `### Exact value counts by column\n${valueCountLines.join("\n")}` : "",
+    `### Full row data\n${markdownTable([["Row #", ...header], ...body.map((row, index) => [String(index + 1), ...row])])}`,
+  ].filter(Boolean).join("\n\n"));
+}
+
 async function parsePptx(bytes: Uint8Array) {
   const zip = await JSZip.loadAsync(bytes);
   const slides = Object.keys(zip.files).filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name)).sort((a, b) => {
@@ -484,23 +543,37 @@ Deno.serve(async (req) => {
 
     let extractedText = "";
 
-    if (isTextLike) {
-      let raw = new TextDecoder().decode(fileBuffer);
-      // Strip RTF control words if it's an RTF file.
-      if (/\.rtf$/i.test(lowerName)) raw = raw.replace(/\\[a-z]+-?\d*\s?/gi, " ").replace(/[{}]/g, " ");
-      extractedText = raw;
+    const isCsvLike = /\.(csv|tsv)$/i.test(lowerName) || contentType.includes("csv") || contentType.includes("tab-separated");
+    const isXlsLike = /\.(xlsx|xlsm|xls|xlsb)$/i.test(lowerName) || contentType.includes("spreadsheet") || contentType.includes("excel");
+
+    if (isXlsLike) {
+      // xlsx library handles .xlsx/.xlsm/.xls/.xlsb. If a .xls is actually a
+      // mislabeled CSV, fall back to CSV parsing so we still get the
+      // "Exact value counts" summary and full row data.
+      try {
+        extractedText = await parseXlsx(fileBytes);
+        if (!extractedText || extractedText.length < 20) throw new Error("empty xlsx");
+      } catch (err) {
+        console.warn("XLSX parse failed, retrying as CSV text:", err);
+        const raw = new TextDecoder().decode(fileBuffer);
+        extractedText = csvLikeToStructured(raw, fileName);
+      }
+    } else if (isCsvLike) {
+      const raw = new TextDecoder().decode(fileBuffer);
+      extractedText = csvLikeToStructured(raw, fileName);
     } else if (isImage) {
       extractedText = await visionExtract(fileBytes, mimeType, fileName);
     } else if (isPDF) {
       extractedText = await parsePdfAccurately(fileBytes, fileName);
     } else if (lowerName.endsWith(".docx")) {
       extractedText = await parseDocx(fileBytes);
-    } else if (lowerName.endsWith(".xlsx") || lowerName.endsWith(".xlsm")) {
-      extractedText = await parseXlsx(fileBytes);
     } else if (lowerName.endsWith(".pptx")) {
       extractedText = await parsePptx(fileBytes);
+    } else if (isTextLike) {
+      let raw = new TextDecoder().decode(fileBuffer);
+      if (/\.rtf$/i.test(lowerName)) raw = raw.replace(/\\[a-z]+-?\d*\s?/gi, " ").replace(/[{}]/g, " ");
+      extractedText = raw;
     } else if (/\.(odt|ods|odp)$/i.test(lowerName)) {
-      // OpenDocument formats are ZIPs with content.xml
       try {
         const zip = await JSZip.loadAsync(fileBytes);
         const contentXml = await zip.file("content.xml")?.async("text");
@@ -508,8 +581,7 @@ Deno.serve(async (req) => {
       } catch {
         extractedText = extractBinaryStrings(fileBytes);
       }
-    } else if (/\.(doc|xls|ppt)$/i.test(lowerName)) {
-      // Legacy Office binary — best-effort string extraction.
+    } else if (/\.(doc|ppt)$/i.test(lowerName)) {
       extractedText = extractBinaryStrings(fileBytes);
     } else {
       extractedText = extractBinaryStrings(fileBytes);
