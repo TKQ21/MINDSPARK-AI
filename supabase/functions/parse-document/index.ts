@@ -484,23 +484,37 @@ Deno.serve(async (req) => {
 
     let extractedText = "";
 
-    if (isTextLike) {
-      let raw = new TextDecoder().decode(fileBuffer);
-      // Strip RTF control words if it's an RTF file.
-      if (/\.rtf$/i.test(lowerName)) raw = raw.replace(/\\[a-z]+-?\d*\s?/gi, " ").replace(/[{}]/g, " ");
-      extractedText = raw;
+    const isCsvLike = /\.(csv|tsv)$/i.test(lowerName) || contentType.includes("csv") || contentType.includes("tab-separated");
+    const isXlsLike = /\.(xlsx|xlsm|xls|xlsb)$/i.test(lowerName) || contentType.includes("spreadsheet") || contentType.includes("excel");
+
+    if (isXlsLike) {
+      // xlsx library handles .xlsx/.xlsm/.xls/.xlsb. If a .xls is actually a
+      // mislabeled CSV, fall back to CSV parsing so we still get the
+      // "Exact value counts" summary and full row data.
+      try {
+        extractedText = await parseXlsx(fileBytes);
+        if (!extractedText || extractedText.length < 20) throw new Error("empty xlsx");
+      } catch (err) {
+        console.warn("XLSX parse failed, retrying as CSV text:", err);
+        const raw = new TextDecoder().decode(fileBuffer);
+        extractedText = csvLikeToStructured(raw, fileName);
+      }
+    } else if (isCsvLike) {
+      const raw = new TextDecoder().decode(fileBuffer);
+      extractedText = csvLikeToStructured(raw, fileName);
     } else if (isImage) {
       extractedText = await visionExtract(fileBytes, mimeType, fileName);
     } else if (isPDF) {
       extractedText = await parsePdfAccurately(fileBytes, fileName);
     } else if (lowerName.endsWith(".docx")) {
       extractedText = await parseDocx(fileBytes);
-    } else if (lowerName.endsWith(".xlsx") || lowerName.endsWith(".xlsm")) {
-      extractedText = await parseXlsx(fileBytes);
     } else if (lowerName.endsWith(".pptx")) {
       extractedText = await parsePptx(fileBytes);
+    } else if (isTextLike) {
+      let raw = new TextDecoder().decode(fileBuffer);
+      if (/\.rtf$/i.test(lowerName)) raw = raw.replace(/\\[a-z]+-?\d*\s?/gi, " ").replace(/[{}]/g, " ");
+      extractedText = raw;
     } else if (/\.(odt|ods|odp)$/i.test(lowerName)) {
-      // OpenDocument formats are ZIPs with content.xml
       try {
         const zip = await JSZip.loadAsync(fileBytes);
         const contentXml = await zip.file("content.xml")?.async("text");
@@ -508,8 +522,7 @@ Deno.serve(async (req) => {
       } catch {
         extractedText = extractBinaryStrings(fileBytes);
       }
-    } else if (/\.(doc|xls|ppt)$/i.test(lowerName)) {
-      // Legacy Office binary — best-effort string extraction.
+    } else if (/\.(doc|ppt)$/i.test(lowerName)) {
       extractedText = extractBinaryStrings(fileBytes);
     } else {
       extractedText = extractBinaryStrings(fileBytes);
