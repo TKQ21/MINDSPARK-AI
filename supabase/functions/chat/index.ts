@@ -258,9 +258,104 @@ function buildRetrievedContext(chunks: Array<{ chunk: string; index: number; sco
 }
 
 const FULL_DOCUMENT_CONTEXT_LIMIT = 260_000;
+const DOCUMENT_OUTPUT_TOKENS = 4096;
 
 function buildFullDocumentContext(documentContext: string): string {
   return `### Full Uploaded Document\n${documentContext}`;
+}
+
+function ordinalToNumber(value: string | undefined): number | null {
+  if (!value) return null;
+  const cleaned = value.toLowerCase().replace(/(?:st|nd|rd|th)$/i, "");
+  const numeric = Number(cleaned.replace(/\D/g, ""));
+  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  const words: Record<string, number> = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10 };
+  return words[cleaned] || null;
+}
+
+function stripLeadingNumbering(line: string) {
+  return line
+    .replace(/^\s*>?\s*/, "")
+    .replace(/^Line\s+\d+\s*:\s*/i, "")
+    .replace(/^\s*(?:Q(?:uestion)?\s*)?\(?\d+\)?[.)\-:]\s*/i, "")
+    .trim();
+}
+
+function findExplicitDocumentLine(documentContext: string, itemNo: number) {
+  const lines = documentContext.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const explicitPatterns = [
+    new RegExp(`^(?:Line\\s+\\d+\\s*:\\s*)?(?:Q(?:uestion)?\\s*)?${itemNo}[.)\\-:]\\s+(.+)$`, "i"),
+    new RegExp(`^(?:Line\\s+\\d+\\s*:\\s*)?\\(${itemNo}\\)\\s+(.+)$`, "i"),
+  ];
+  for (const line of lines) {
+    if (/Word positions:/i.test(line)) continue;
+    for (const pattern of explicitPatterns) {
+      if (pattern.test(line)) return line;
+    }
+  }
+  for (const line of lines) {
+    const match = line.match(/^Line\s+(\d+)\s*:\s*(.+)$/i);
+    if (match && Number(match[1]) === itemNo) return line;
+  }
+  return null;
+}
+
+function tryAnswerPositionQuestion(question: string, documentContext: string): string | null {
+  const q = question.toLowerCase();
+  if (!/(word|character|char|akshar|shabd|position|line|point|q\s*\d|question\s*\d)/i.test(question)) return null;
+
+  const itemNo = ordinalToNumber(
+    question.match(/(?:q|question|ques|point|line|paragraph|para)\s*#?\s*(\d+(?:st|nd|rd|th)?)/i)?.[1] ||
+    question.match(/(\d+)\s*(?:number|no\.?|wale|waale)/i)?.[1],
+  );
+  const wordNo = ordinalToNumber(
+    question.match(/(\d+(?:st|nd|rd|th)?|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s*(?:word|shabd)/i)?.[1] ||
+    question.match(/(?:word|shabd)\s*(?:number|no\.?|#)?\s*(\d+(?:st|nd|rd|th)?)/i)?.[1],
+  );
+  const charNo = ordinalToNumber(
+    question.match(/(\d+(?:st|nd|rd|th)?|first|second|third|fourth|fifth|sixth|seventh|eighth|ninth|tenth)\s*(?:character|char|akshar)/i)?.[1] ||
+    question.match(/(?:character|char|akshar)\s*(?:number|no\.?|#)?\s*(\d+(?:st|nd|rd|th)?)/i)?.[1],
+  );
+
+  if (!itemNo || (!wordNo && !charNo)) return null;
+  const matchedLine = findExplicitDocumentLine(documentContext, itemNo);
+  if (!matchedLine) {
+    return `**Maine is document mein Q/Point/Line ${itemNo} clearly identify nahi kar paaya.**\n\nYeh information document ke parsed context mein exact numbering ke saath nahi mili.\n\n❌ Confidence: Not found`;
+  }
+
+  const lineText = stripLeadingNumbering(matchedLine);
+  const words = lineText.split(/\s+/).filter(Boolean);
+  if (wordNo) {
+    if (wordNo > words.length) return `> "${matchedLine}"\n\n**That position does not exist — Q/Point ${itemNo} has only ${words.length} words.**\n\n✅ Confidence: High — exact line found in document\n\n📌 Source: ${matchedLine.match(/^Line\s+\d+/i)?.[0] || `Q/Point ${itemNo}`}`;
+    return `> "${matchedLine}"\n\nQ/Point ${itemNo} ka word number ${wordNo}: **"${words[wordNo - 1]}"**\n\n✅ Confidence: High — exact line found in document\n\n📌 Source: ${matchedLine.match(/^Line\s+\d+/i)?.[0] || `Q/Point ${itemNo}`}`;
+  }
+
+  const compact = lineText.replace(/\s/g, "");
+  if (charNo && charNo > compact.length) return `> "${matchedLine}"\n\n**That position does not exist — Q/Point ${itemNo} has only ${compact.length} non-space characters.**\n\n✅ Confidence: High — exact line found in document`;
+  return `> "${matchedLine}"\n\nQ/Point ${itemNo} ka character number ${charNo}: **"${compact[(charNo || 1) - 1]}"**\n\n✅ Confidence: High — exact line found in document\n\n📌 Source: ${matchedLine.match(/^Line\s+\d+/i)?.[0] || `Q/Point ${itemNo}`}`;
+}
+
+function tryAnswerExactValueCount(question: string, documentContext: string): string | null {
+  if (!/(count|kitn|total|rating|stars?|frequency|value|rows?|kitne|kitni)/i.test(question)) return null;
+  const query = normalizeText(question);
+  const queryNumbers = question.match(/\d+(?:\.\d+)?/g) || [];
+  const lines = documentContext.split(/\n+/).filter((line) => /:\s*.*=\s*\d+/.test(line));
+
+  for (const line of lines) {
+    const normalizedLine = normalizeText(line);
+    const column = normalizeText(line.split(":")[0] || "").replace(/^\s*/, "");
+    if (column && !query.split(" ").some((term) => term.length > 2 && column.includes(term))) continue;
+    const entries = [...line.matchAll(/([^;:|]+?)\s*=\s*(\d+)/g)];
+    for (const entry of entries) {
+      const value = entry[1].trim();
+      const count = entry[2].trim();
+      const valueMatches = queryNumbers.some((num) => normalizeText(value) === normalizeText(num) || normalizeText(value).includes(normalizeText(num)));
+      if (valueMatches && normalizedLine.includes(normalizeText(value))) {
+        return `**Exact count found:** ${value} = **${count}**\n\n*Matched row:* \`${line.trim()}\`\n\n✅ Confidence: High — exact value count is present in the uploaded document.\n\n📌 Source: Exact value counts by column`;
+      }
+    }
+  }
+  return null;
 }
 
 function extractMeaningfulNumbers(answer: string): string[] {
