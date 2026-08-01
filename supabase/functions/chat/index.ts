@@ -193,6 +193,48 @@ async function semanticQueryAnalysis(question: string, apiKey: string): Promise<
   }
 }
 
+// ---------- Embedding based semantic retrieval (cosine similarity) ----------
+const EMBED_MODEL = "openai/text-embedding-3-small";
+const EMBED_BATCH = 64;
+const MAX_EMBED_CHUNKS = 320;
+
+async function embedTexts(texts: string[], apiKey: string): Promise<number[][] | null> {
+  try {
+    const out: number[][] = [];
+    for (let i = 0; i < texts.length; i += EMBED_BATCH) {
+      const batch = texts.slice(i, i + EMBED_BATCH).map((t) => t.slice(0, 6000));
+      const resp = await fetch("https://ai.gateway.lovable.dev/v1/embeddings", {
+        method: "POST",
+        headers: { "Lovable-API-Key": apiKey, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: EMBED_MODEL, input: batch }),
+      });
+      if (!resp.ok) {
+        console.warn("embeddings failed:", resp.status, (await resp.text()).slice(0, 200));
+        return null;
+      }
+      const data = await resp.json();
+      const vectors = (data?.data || []).sort((a: any, b: any) => a.index - b.index).map((d: any) => d.embedding);
+      if (vectors.length !== batch.length) return null;
+      out.push(...vectors);
+    }
+    return out;
+  } catch (err) {
+    console.warn("embedTexts error:", err);
+    return null;
+  }
+}
+
+function cosine(a: number[], b: number[]): number {
+  let dot = 0, na = 0, nb = 0;
+  for (let i = 0; i < a.length && i < b.length; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  if (!na || !nb) return 0;
+  return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+
 function pickRelevantChunks(
   documentContext: string,
   query: string,
@@ -223,8 +265,8 @@ function pickRelevantChunks(
 
   const ranked = [...scored].sort((a, b) => b.score - a.score);
 
-  const TOP_K = 30;
-  const MAX_CHARS = 65000;
+  const TOP_K = 18;
+  const MAX_CHARS = RETRIEVED_CONTEXT_LIMIT;
   const selected: Array<{ chunk: string; index: number; score: number }> = [];
   let totalChars = 0;
 
@@ -245,24 +287,98 @@ function pickRelevantChunks(
   }
 
   if (!selected.length) {
-    return chunks.slice(0, 12).map((chunk, index) => ({ chunk, index, score: 1 }));
+    return chunks.slice(0, 10).map((chunk, index) => ({ chunk, index, score: 1 }));
   }
 
   return selected.sort((a, b) => a.index - b.index);
 }
 
+// Semantic (embedding) retrieval: chunk the doc, embed chunks + query,
+// rank by cosine similarity, and keep the top-k grounded excerpts.
+// Falls back to keyword scoring when embeddings are unavailable.
+async function pickRelevantChunksSemantic(
+  documentContext: string,
+  query: string,
+  semantic: { keywords: string[]; expandedQueries: string[]; wantsTable: boolean },
+  apiKey: string | undefined,
+): Promise<Array<{ chunk: string; index: number; score: number }>> {
+  const keywordSelection = pickRelevantChunks(documentContext, query, semantic);
+  if (!apiKey) return keywordSelection;
+
+  const chunks = splitDocumentIntoChunks(documentContext);
+  if (chunks.length < 2) return keywordSelection;
+
+  // Pre-filter with keyword score when the doc is huge, so embedding stays fast.
+  let candidates = chunks.map((chunk, index) => ({ chunk, index }));
+  if (candidates.length > MAX_EMBED_CHUNKS) {
+    const terms = getQueryTerms(query);
+    candidates = candidates
+      .map((c) => ({ ...c, s: scoreChunk(c.chunk, query, terms) }))
+      .sort((a, b) => b.s - a.s)
+      .slice(0, MAX_EMBED_CHUNKS)
+      .map(({ chunk, index }) => ({ chunk, index }));
+  }
+
+  const queryText = [query, ...semantic.expandedQueries, semantic.keywords.join(" ")]
+    .filter((v) => v && v.trim())
+    .join("\n")
+    .slice(0, 4000);
+
+  const vectors = await embedTexts([queryText, ...candidates.map((c) => c.chunk)], apiKey);
+  if (!vectors || vectors.length !== candidates.length + 1) return keywordSelection;
+
+  const queryVec = vectors[0];
+  const ranked = candidates
+    .map((c, i) => ({ chunk: c.chunk, index: c.index, score: cosine(queryVec, vectors[i + 1]) }))
+    .sort((a, b) => b.score - a.score);
+
+  const selected: Array<{ chunk: string; index: number; score: number }> = [];
+  let totalChars = 0;
+
+  // Always keep dataset summary chunks (row counts / value counts) for count questions.
+  for (const item of ranked) {
+    if (/^(## Sheet:|Total data rows|Columns:|### Exact value counts by column)/im.test(item.chunk)) {
+      selected.push(item);
+      totalChars += item.chunk.length;
+    }
+  }
+
+  for (const item of ranked) {
+    if (selected.some((s) => s.index === item.index)) continue;
+    if (totalChars + item.chunk.length > RETRIEVED_CONTEXT_LIMIT && selected.length > 0) break;
+    selected.push(item);
+    totalChars += item.chunk.length;
+    if (selected.length >= 16) break;
+  }
+
+  // Merge top keyword hits so exact literal/number matches are never lost.
+  for (const item of keywordSelection.slice(0, 6)) {
+    if (selected.some((s) => s.index === item.index)) continue;
+    if (totalChars + item.chunk.length > RETRIEVED_CONTEXT_LIMIT) break;
+    selected.push({ ...item, score: item.score });
+    totalChars += item.chunk.length;
+  }
+
+  if (!selected.length) return keywordSelection;
+  return selected.sort((a, b) => a.index - b.index);
+}
+
 function buildRetrievedContext(chunks: Array<{ chunk: string; index: number; score: number }>): string {
   return chunks
-    .map(({ chunk, index, score }) => `### Chunk #${index + 1} (relevance: ${score})\n${chunk}`)
+    .map(({ chunk, index, score }) => `### Chunk #${index + 1} (relevance: ${typeof score === "number" ? score.toFixed(3) : score})\n${chunk}`)
     .join("\n\n---\n\n");
 }
 
-const FULL_DOCUMENT_CONTEXT_LIMIT = 260_000;
+// Keep prompts well inside provider payload limits — oversized single-shot
+// contexts were causing upstream failures that surfaced as "AI service is busy".
+const FULL_DOCUMENT_CONTEXT_LIMIT = 60_000;
+const RETRIEVED_CONTEXT_LIMIT = 55_000;
 const DOCUMENT_OUTPUT_TOKENS = 4096;
 
 function buildFullDocumentContext(documentContext: string): string {
   return `### Full Uploaded Document\n${documentContext}`;
 }
+
 
 function ordinalToNumber(value: string | undefined): number | null {
   if (!value) return null;
@@ -575,10 +691,13 @@ function toGeminiPayload(apiMessages: any[], hasDocContext: boolean) {
     systemInstruction: systemParts.length ? { parts: systemParts } : undefined,
     contents,
     generationConfig: {
+      // Grounded, deterministic answers in document mode.
       temperature: hasDocContext ? 0 : 0.7,
-      topP: hasDocContext ? 0.1 : 0.95,
+      topP: hasDocContext ? 0 : 0.95,
+      topK: hasDocContext ? 1 : 40,
       maxOutputTokens: hasDocContext ? DOCUMENT_OUTPUT_TOKENS : 4096,
     },
+
   };
 }
 
@@ -845,11 +964,12 @@ serve(async (req) => {
       const useFullDocument = documentContext.length <= FULL_DOCUMENT_CONTEXT_LIMIT;
       const contextForPrompt = useFullDocument
         ? buildFullDocumentContext(documentContext)
-        : buildRetrievedContext(pickRelevantChunks(documentContext, retrievalQuery, {
+        : buildRetrievedContext(await pickRelevantChunksSemantic(documentContext, retrievalQuery, {
           keywords: getQueryTerms(retrievalQuery),
           expandedQueries: expandQuery(retrievalQuery),
           wantsTable: /table|list|subjects?|papers?|topics?|marks?|syllabus|details?|data|chart|figure/i.test(retrievalQuery),
-        }));
+        }, Deno.env.get("LOVABLE_API_KEY")));
+
 
       apiMessages.push({
         role: "system",
