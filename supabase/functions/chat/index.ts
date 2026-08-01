@@ -961,11 +961,12 @@ serve(async (req) => {
       const useFullDocument = documentContext.length <= FULL_DOCUMENT_CONTEXT_LIMIT;
       const contextForPrompt = useFullDocument
         ? buildFullDocumentContext(documentContext)
-        : buildRetrievedContext(pickRelevantChunks(documentContext, retrievalQuery, {
+        : buildRetrievedContext(await pickRelevantChunksSemantic(documentContext, retrievalQuery, {
           keywords: getQueryTerms(retrievalQuery),
           expandedQueries: expandQuery(retrievalQuery),
           wantsTable: /table|list|subjects?|papers?|topics?|marks?|syllabus|details?|data|chart|figure/i.test(retrievalQuery),
-        }));
+        }, Deno.env.get("LOVABLE_API_KEY")));
+
 
       apiMessages.push({
         role: "system",
