@@ -691,10 +691,13 @@ function toGeminiPayload(apiMessages: any[], hasDocContext: boolean) {
     systemInstruction: systemParts.length ? { parts: systemParts } : undefined,
     contents,
     generationConfig: {
+      // Grounded, deterministic answers in document mode.
       temperature: hasDocContext ? 0 : 0.7,
-      topP: hasDocContext ? 0.1 : 0.95,
+      topP: hasDocContext ? 0 : 0.95,
+      topK: hasDocContext ? 1 : 40,
       maxOutputTokens: hasDocContext ? DOCUMENT_OUTPUT_TOKENS : 4096,
     },
+
   };
 }
 
