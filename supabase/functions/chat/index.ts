@@ -397,31 +397,52 @@ function stripLeadingNumbering(line: string) {
     .trim();
 }
 
-function findExplicitDocumentLine(documentContext: string, itemNo: number) {
+// Find the line the user means.
+// kind = "q"    → only real question numbering (Q3, Q.3, Q-3, Question 3, "3." , "3)")
+// kind = "line" → only the explicit "Line N:" marker
+function findExplicitDocumentLine(documentContext: string, itemNo: number, kind: "q" | "line" | "any") {
   const lines = documentContext.split(/\n+/).map((line) => line.trim()).filter(Boolean);
-  const explicitPatterns = [
-    new RegExp(`^(?:Line\\s+\\d+\\s*:\\s*)?(?:Q(?:uestion)?\\s*)?${itemNo}[.)\\-:]\\s+(.+)$`, "i"),
-    new RegExp(`^(?:Line\\s+\\d+\\s*:\\s*)?\\(${itemNo}\\)\\s+(.+)$`, "i"),
+  const stripLineMarker = (line: string) => line.replace(/^Line\s+\d+\s*:\s*/i, "").trim();
+
+  if (kind === "line") {
+    for (const line of lines) {
+      const match = line.match(/^Line\s+(\d+)\s*:\s*(.+)$/i);
+      if (match && Number(match[1]) === itemNo) return line;
+    }
+    return null;
+  }
+
+  // Strict Q-numbering first: "Q.3", "Q3", "Q - 3", "Question 3", "Ques 3"
+  const qPatterns = [
+    new RegExp(`^(?:Q(?:uestion|ues|n)?)\\s*[.)\\-:]?\\s*${itemNo}(?![0-9])\\s*[.)\\-:]?\\s*(.*)$`, "i"),
+    new RegExp(`^\\(?${itemNo}\\)?\\s*[.)\\-:]\\s+(.+)$`),
   ];
-  for (const line of lines) {
-    if (/Word positions:/i.test(line)) continue;
-    for (const pattern of explicitPatterns) {
-      if (pattern.test(line)) return line;
+  for (const pass of qPatterns) {
+    for (const line of lines) {
+      if (/Word positions:/i.test(line)) continue;
+      const body = stripLineMarker(line);
+      if (pass.test(body)) return line;
     }
   }
-  for (const line of lines) {
-    const match = line.match(/^Line\s+(\d+)\s*:\s*(.+)$/i);
-    if (match && Number(match[1]) === itemNo) return line;
+
+  if (kind === "any") {
+    for (const line of lines) {
+      const match = line.match(/^Line\s+(\d+)\s*:\s*(.+)$/i);
+      if (match && Number(match[1]) === itemNo) return line;
+    }
   }
   return null;
 }
 
 function tryAnswerPositionQuestion(question: string, documentContext: string): string | null {
-  const q = question.toLowerCase();
   if (!/(word|character|char|akshar|shabd|position|line|point|q\s*\d|question\s*\d)/i.test(question)) return null;
 
+  const qMatch = question.match(/(?:q|ques|question|qn|point|para(?:graph)?)\s*\.?\s*#?\s*(\d+)/i);
+  const lineMatch = question.match(/(?:line|panti|lain)\s*\.?\s*#?\s*(\d+)/i);
+  const kind: "q" | "line" | "any" = lineMatch ? "line" : qMatch ? "q" : "any";
   const itemNo = ordinalToNumber(
-    question.match(/(?:q|question|ques|point|line|paragraph|para)\s*#?\s*(\d+(?:st|nd|rd|th)?)/i)?.[1] ||
+    lineMatch?.[1] ||
+    qMatch?.[1] ||
     question.match(/(\d+)\s*(?:number|no\.?|wale|waale)/i)?.[1],
   );
   const wordNo = ordinalToNumber(
@@ -434,22 +455,25 @@ function tryAnswerPositionQuestion(question: string, documentContext: string): s
   );
 
   if (!itemNo || (!wordNo && !charNo)) return null;
-  const matchedLine = findExplicitDocumentLine(documentContext, itemNo);
+  const label = kind === "line" ? `Line ${itemNo}` : `Q${itemNo}`;
+  const matchedLine = findExplicitDocumentLine(documentContext, itemNo, kind);
   if (!matchedLine) {
-    return `**Maine is document mein Q/Point/Line ${itemNo} clearly identify nahi kar paaya.**\n\nYeh information document ke parsed context mein exact numbering ke saath nahi mili.\n\n❌ Confidence: Not found`;
+    return `**Answer not available in documents.**\n\n${label} document ke uploaded content mein exact numbering ke saath nahi mila.\n\n❌ Confidence: Not found`;
   }
 
+  const sourceTag = matchedLine.match(/^Line\s+\d+/i)?.[0] || label;
   const lineText = stripLeadingNumbering(matchedLine);
   const words = lineText.split(/\s+/).filter(Boolean);
   if (wordNo) {
-    if (wordNo > words.length) return `> "${matchedLine}"\n\n**That position does not exist — Q/Point ${itemNo} has only ${words.length} words.**\n\n✅ Confidence: High — exact line found in document\n\n📌 Source: ${matchedLine.match(/^Line\s+\d+/i)?.[0] || `Q/Point ${itemNo}`}`;
-    return `> "${matchedLine}"\n\nQ/Point ${itemNo} ka word number ${wordNo}: **"${words[wordNo - 1]}"**\n\n✅ Confidence: High — exact line found in document\n\n📌 Source: ${matchedLine.match(/^Line\s+\d+/i)?.[0] || `Q/Point ${itemNo}`}`;
+    if (wordNo > words.length) return `> "${matchedLine}"\n\n**That position does not exist — ${label} has only ${words.length} words.**\n\n✅ Confidence: High — exact line found in document\n\n📌 Source: ${sourceTag}`;
+    return `> "${matchedLine}"\n\n${label} ka word number ${wordNo}: **"${words[wordNo - 1]}"**\n\n✅ Confidence: High — exact line found in document\n\n📌 Source: ${sourceTag}`;
   }
 
   const compact = lineText.replace(/\s/g, "");
-  if (charNo && charNo > compact.length) return `> "${matchedLine}"\n\n**That position does not exist — Q/Point ${itemNo} has only ${compact.length} non-space characters.**\n\n✅ Confidence: High — exact line found in document`;
-  return `> "${matchedLine}"\n\nQ/Point ${itemNo} ka character number ${charNo}: **"${compact[(charNo || 1) - 1]}"**\n\n✅ Confidence: High — exact line found in document\n\n📌 Source: ${matchedLine.match(/^Line\s+\d+/i)?.[0] || `Q/Point ${itemNo}`}`;
+  if (charNo && charNo > compact.length) return `> "${matchedLine}"\n\n**That position does not exist — ${label} has only ${compact.length} non-space characters.**\n\n✅ Confidence: High — exact line found in document\n\n📌 Source: ${sourceTag}`;
+  return `> "${matchedLine}"\n\n${label} ka character number ${charNo}: **"${compact[(charNo || 1) - 1]}"**\n\n✅ Confidence: High — exact line found in document\n\n📌 Source: ${sourceTag}`;
 }
+
 
 function tryAnswerExactValueCount(question: string, documentContext: string): string | null {
   if (!/(count|kitn|total|rating|stars?|frequency|value|rows?|kitne|kitni)/i.test(question)) return null;
@@ -829,13 +853,14 @@ The user's uploaded document is provided as [Context]. Treat it as the ONLY sour
     c. Tokenize the quoted line EXACTLY — split by whitespace. STRIP the leading numbering token ("5.", "5)", "(5)") before counting, unless the user says "including the number".
     d. Count strictly 1-indexed. Internally enumerate word 1, word 2, word 3... before returning.
     e. Return the EXACT word/character asked, wrapped in **bold** and quotes, e.g. **"laid"**. For a character, also state which word it came from.
-    f. If the position does not exist, reply: **That position does not exist — point N has only K words.**
+    f. If the position or the asked item number does not exist, reply: **Answer not available in documents.**
+    g. "Q3" means the item labelled Q3/Q.3/"3." — never the 3rd line, never Q2. "Line 3" means the "Line 3:" marker only.
 11. **VERBATIM NUMBER MODE** — When the user asks for a specific value (percentage, rate, count, marks) tied to a specific label/category/range (e.g. "survival rate for 40-50 age group"):
     a. Find the row/cell whose label matches EXACTLY (e.g. "40-50"). Do NOT use the value from "41-50", "30-40", "50-60", or any other row.
     b. Before answering, show the matched row verbatim, e.g. *Matched row: | 40-50 | 74.32% |*
     c. Return the value EXACTLY as written — preserve every digit and decimal (e.g. **74.32%**, never rounded to 40% or 74%).
-    d. If no row contains that EXACT label, reply: **The exact label "<label>" is not in the document.** Do NOT substitute a different row.
-12. **NO INVENTION / NO WORLD KNOWLEDGE** — Never write any sentence, fact, or biographical/narrative paragraph that is not present in the [Context]. When the user asks "what does the document say about X", quote the actual sentences from the context verbatim (use blockquotes). Do NOT generate new text from outside knowledge, even if you know the topic well.
+    d. If no row contains that EXACT label, reply: **Answer not available in documents.** Do NOT substitute a different row.
+12. **NO INVENTION / NO WORLD KNOWLEDGE** — Never write any sentence, fact, or biographical/narrative paragraph that is not present in the [Context]. When the user asks "what does the document say about X", quote the actual sentences from the context verbatim (use blockquotes). Do NOT generate new text from outside knowledge, even if you know the topic well. If it is not in the context, reply **Answer not available in documents.**
 13. Before final answer, double-check every number against the [Context]. If the number is not visibly present, do not state it as fact.
 
 📌 MANDATORY CITATION FORMAT — Every answer with a factual/numeric claim MUST end with a LOCATION-ONLY citation (NEVER re-quote the answer text; NEVER paste the excerpt again):
@@ -973,7 +998,7 @@ serve(async (req) => {
 
       apiMessages.push({
         role: "system",
-        content: `[Context — ${useFullDocument ? "FULL uploaded document text" : "Relevant document excerpts because the full text is very large"}]\n\n${contextForPrompt}\n\n[Instructions]\nAnswer using ONLY the current uploaded document context above. Current upload fully replaces older documents. Prioritize exact document evidence over conversation history. Answer deeply, accurately, and in the user's same language. Tables with \`|\` are real data: read row labels and values verbatim. For numeric/count questions, first use "Exact value counts by column" and "Numeric statistics by column". For word/character/line-position questions, use explicit "Line N" and "Word positions" markers if present. If exact information is missing, reply: **Yeh specific information document mein nahi mili. Document mein jo data mila:** and list closest explicit rows/labels. End with confidence (✅ High / ⚠️ Medium / ❌ Not found) and a location-only citation like "📌 Source: Chunk #3, Page 4, Paragraph 7".`,
+        content: `[Context — ${useFullDocument ? "FULL uploaded document text" : "Relevant document excerpts because the full text is very large"}]\n\n${contextForPrompt}\n\n[Instructions]\nAnswer using ONLY the current uploaded document context above. Current upload fully replaces older documents. Never use outside/world knowledge and never invent sentences.\n\nSTRICT GROUNDING: If the requested information is NOT present in the context above, your entire reply must be exactly:\n**Answer not available in documents.**\n(optionally followed by one short line listing the closest labels/rows that ARE present). Never guess, never substitute a nearby item.\n\nNUMBERING RULE: "Q3" / "question 3" means the item labelled Q3 / Q.3 / "3." in the document — NOT the 3rd line and NOT Q2. If the user says "line 3", use the "Line 3:" marker. If the exact asked item number does not exist in the document, reply **Answer not available in documents.** instead of answering a different number.\n\nOther rules: answer deeply, accurately, in the user's language. Tables with \`|\` are real data — read row labels and values verbatim. For numeric/count questions use "Exact value counts by column" and "Numeric statistics by column". For word/character/line-position questions use explicit "Line N" and "Word positions" markers. End with confidence (✅ High / ⚠️ Medium / ❌ Not found) and a location-only citation like "📌 Source: Chunk #3, Page 4, Paragraph 7".`,
       });
     }
 
