@@ -137,8 +137,28 @@ serve(async (req) => {
 
       if (decision === "approved") {
         const now = new Date();
-        const expires = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-        // upsert user_plans
+
+        // Pro must run a full 30 calendar days INCLUDING the purchase day, so it
+        // never expires early even if the payment was made just before midnight.
+        // Base = existing unexpired expiry (stacking), else today (IST day start).
+        const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
+        const { data: existing } = await admin()
+          .from("user_plans")
+          .select("pro_expires_at")
+          .eq("user_id", pr.user_id)
+          .maybeSingle();
+
+        const existingExpiry = existing?.pro_expires_at ? new Date(existing.pro_expires_at) : null;
+        let expires: Date;
+        if (existingExpiry && existingExpiry.getTime() > now.getTime()) {
+          expires = new Date(existingExpiry.getTime() + 30 * 24 * 60 * 60 * 1000);
+        } else {
+          const istNow = new Date(now.getTime() + IST_OFFSET_MS);
+          const istDayStart = Date.UTC(istNow.getUTCFullYear(), istNow.getUTCMonth(), istNow.getUTCDate());
+          // 30 full days including today → end of the 30th day (IST).
+          expires = new Date(istDayStart - IST_OFFSET_MS + 30 * 24 * 60 * 60 * 1000 - 1000);
+        }
+
         await admin()
           .from("user_plans")
           .upsert(
@@ -152,6 +172,7 @@ serve(async (req) => {
             { onConflict: "user_id" }
           );
       }
+
       return json({ success: true });
     }
 
