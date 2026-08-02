@@ -711,6 +711,8 @@ function toGeminiPayload(apiMessages: any[], hasDocContext: boolean) {
     });
   }
 
+  // Latency: disable Gemini "thinking" so the first token arrives in ~1s.
+  // Grounded document answers come from the provided context, not from reasoning.
   return {
     systemInstruction: systemParts.length ? { parts: systemParts } : undefined,
     contents,
@@ -719,11 +721,13 @@ function toGeminiPayload(apiMessages: any[], hasDocContext: boolean) {
       temperature: hasDocContext ? 0 : 0.7,
       topP: hasDocContext ? 0 : 0.95,
       topK: hasDocContext ? 1 : 40,
-      maxOutputTokens: hasDocContext ? DOCUMENT_OUTPUT_TOKENS : 4096,
+      maxOutputTokens: hasDocContext ? DOCUMENT_OUTPUT_TOKENS : 2048,
+      thinkingConfig: { thinkingBudget: 0 },
     },
 
   };
 }
+
 
 async function callDirectGemini(apiMessages: any[], model: string, hasDocContext: boolean) {
   const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") || Deno.env.get("VITE_GEMINI_API_KEY");
