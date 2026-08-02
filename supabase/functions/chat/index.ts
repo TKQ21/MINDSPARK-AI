@@ -549,66 +549,77 @@ function buildDocumentVerificationNote(answer: string, documentContext: string):
   return notes.length ? `\n\n${notes.join("\n")}` : "";
 }
 
-function streamWithDocumentVerification(upstreamBody: ReadableStream<Uint8Array> | null, documentContext: string) {
-  if (!upstreamBody) return streamSingleMessage("**AI service returned an empty response.**");
-  const reader = upstreamBody.getReader();
+const SSE_HEADERS = {
+  "Content-Type": "text/event-stream",
+  "Cache-Control": "no-cache, no-transform",
+  Connection: "keep-alive",
+  "X-Accel-Buffering": "no",
+};
+
+// Line-oriented SSE transform. Using pipeThrough (instead of an async start()
+// loop that only resolves at the end) keeps delivery truly incremental, so the
+// first tokens reach the browser in ~1s instead of after the full answer.
+function sseTransform(options: {
+  onData: (data: string, emit: (payload: string) => void) => void;
+  onFlush?: (emit: (payload: string) => void) => void;
+}) {
   const decoder = new TextDecoder();
   const encoder = new TextEncoder();
-  let answer = "";
-  let finished = false;
+  let buffer = "";
 
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const enqueueEvent = (payload: string) => controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
-      const enqueueDelta = (content: string) => enqueueEvent(JSON.stringify({ choices: [{ delta: { content } }] }));
-      const finish = () => {
-        if (finished) return;
-        const note = buildDocumentVerificationNote(answer, documentContext);
-        if (note) enqueueDelta(note);
-        enqueueEvent("[DONE]");
-        finished = true;
-      };
-      const processEvent = (raw: string) => {
-        const dataLines = raw.split(/\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim());
-        if (!dataLines.length) {
-          controller.enqueue(encoder.encode(`${raw}\n\n`));
-          return;
+  return new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      const emit = (payload: string) => controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+      buffer += decoder.decode(chunk, { stream: true });
+      let newlineIndex = buffer.indexOf("\n");
+      while (newlineIndex !== -1) {
+        const line = buffer.slice(0, newlineIndex).replace(/\r$/, "").trim();
+        buffer = buffer.slice(newlineIndex + 1);
+        if (line.startsWith("data:")) {
+          const data = line.replace(/^data:\s?/, "").trim();
+          if (data) options.onData(data, emit);
         }
-        for (const data of dataLines) {
-          if (data === "[DONE]") {
-            finish();
-            continue;
-          }
-          try {
-            const parsed = JSON.parse(data);
-            const content = parsed?.choices?.[0]?.delta?.content ?? parsed?.choices?.[0]?.message?.content;
-            if (typeof content === "string") answer += content;
-          } catch (_) {}
-          enqueueEvent(data);
-        }
-      };
-
-      let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let boundary = buffer.indexOf("\n\n");
-        while (boundary !== -1) {
-          const raw = buffer.slice(0, boundary);
-          buffer = buffer.slice(boundary + 2);
-          processEvent(raw);
-          boundary = buffer.indexOf("\n\n");
-        }
+        newlineIndex = buffer.indexOf("\n");
       }
-      if (buffer.trim()) processEvent(buffer);
-      finish();
-      controller.close();
+    },
+    flush(controller) {
+      const emit = (payload: string) => controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
+      const tail = buffer.trim();
+      if (tail.startsWith("data:")) {
+        const data = tail.replace(/^data:\s?/, "").trim();
+        if (data) options.onData(data, emit);
+      }
+      options.onFlush?.(emit);
+      emit("[DONE]");
+    },
+  });
+}
+
+function streamWithDocumentVerification(upstreamBody: ReadableStream<Uint8Array> | null, documentContext: string) {
+  if (!upstreamBody) return streamSingleMessage("**AI service returned an empty response.**");
+  let answer = "";
+
+  const transform = sseTransform({
+    onData: (data, emit) => {
+      if (data === "[DONE]") return;
+      try {
+        const parsed = JSON.parse(data);
+        const content = parsed?.choices?.[0]?.delta?.content ?? parsed?.choices?.[0]?.message?.content;
+        if (typeof content === "string") answer += content;
+      } catch (_) { /* keepalive / noise frame */ }
+      emit(data);
+    },
+    onFlush: (emit) => {
+      const note = buildDocumentVerificationNote(answer, documentContext);
+      if (note) emit(JSON.stringify({ choices: [{ delta: { content: note } }] }));
     },
   });
 
-  return new Response(stream, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
+  return new Response(upstreamBody.pipeThrough(transform), {
+    headers: { ...corsHeaders, ...SSE_HEADERS },
+  });
 }
+
 
 function streamSingleMessage(content: string) {
   const encoder = new TextEncoder();
@@ -622,7 +633,7 @@ function streamSingleMessage(content: string) {
   });
 
   return new Response(stream, {
-    headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+    headers: { ...corsHeaders, ...SSE_HEADERS },
   });
 }
 
@@ -641,61 +652,26 @@ function geminiDirectModel(id: string): string {
 function transformGeminiStream(upstreamBody: ReadableStream<Uint8Array> | null) {
   if (!upstreamBody) return streamSingleMessage("**AI service returned an empty response.**");
 
-  const reader = upstreamBody.getReader();
-  const decoder = new TextDecoder();
-  const encoder = new TextEncoder();
-  let finished = false;
-
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const enqueueEvent = (payload: string) => controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
-      const enqueueDelta = (content: string) => enqueueEvent(JSON.stringify({ choices: [{ delta: { content } }] }));
-      const finish = () => {
-        if (finished) return;
-        enqueueEvent("[DONE]");
-        finished = true;
-      };
-      const processEvent = (raw: string) => {
-        const dataLines = raw
-          .split(/\n/)
-          .filter((line) => line.trim().startsWith("data:"))
-          .map((line) => line.replace(/^\s*data:\s?/, "").trim())
-          .filter(Boolean);
-
-        for (const data of dataLines) {
-          try {
-            const parsed = JSON.parse(data);
-            const parts = parsed?.candidates?.[0]?.content?.parts || [];
-            for (const part of parts) {
-              if (typeof part?.text === "string" && part.text) enqueueDelta(part.text);
-            }
-          } catch (_) {
-            // Ignore non-JSON keepalive/noise frames from the upstream stream.
+  const transform = sseTransform({
+    onData: (data, emit) => {
+      if (data === "[DONE]") return;
+      try {
+        const parsed = JSON.parse(data);
+        const parts = parsed?.candidates?.[0]?.content?.parts || [];
+        for (const part of parts) {
+          if (typeof part?.text === "string" && part.text) {
+            emit(JSON.stringify({ choices: [{ delta: { content: part.text } }] }));
           }
         }
-      };
-
-      let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let boundary = buffer.indexOf("\n\n");
-        while (boundary !== -1) {
-          const raw = buffer.slice(0, boundary);
-          buffer = buffer.slice(boundary + 2);
-          processEvent(raw);
-          boundary = buffer.indexOf("\n\n");
-        }
-      }
-      if (buffer.trim()) processEvent(buffer);
-      finish();
-      controller.close();
+      } catch (_) { /* keepalive / noise frame */ }
     },
   });
 
-  return new Response(stream, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
+  return new Response(upstreamBody.pipeThrough(transform), {
+    headers: { ...corsHeaders, ...SSE_HEADERS },
+  });
 }
+
 
 function toGeminiPayload(apiMessages: any[], hasDocContext: boolean) {
   const systemParts: Array<{ text: string }> = [];
@@ -796,7 +772,7 @@ async function callGatewayChat(apiMessages: any[], model: string, hasDocContext:
 
     if (response.ok) {
       return new Response(response.body, {
-        headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+        headers: { ...corsHeaders, ...SSE_HEADERS },
       });
     }
 
@@ -1042,7 +1018,7 @@ serve(async (req) => {
         });
       }
       return new Response(groqResp.body, {
-        headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+        headers: { ...corsHeaders, ...SSE_HEADERS },
       });
     }
 
