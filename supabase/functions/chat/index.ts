@@ -770,9 +770,11 @@ async function callGatewayChat(apiMessages: any[], model: string, hasDocContext:
     });
   }
 
+  // Fast models first — slow pro models are not worth the extra seconds.
   const models = hasDocContext
-    ? [geminiGatewayId(model), "google/gemini-3.1-pro-preview", "google/gemini-2.5-pro", "google/gemini-2.5-flash"]
+    ? ["google/gemini-3-flash-preview", "google/gemini-2.5-flash"]
     : [geminiGatewayId(model), "google/gemini-3-flash-preview", "google/gemini-2.5-flash"];
+
   let lastError = "";
 
   for (const gatewayModel of [...new Set(models)]) {
