@@ -627,13 +627,16 @@ function streamSingleMessage(content: string) {
 }
 
 function geminiDirectModel(id: string): string {
+  // Flash across the board: pro adds several seconds of latency without
+  // improving grounded, context-based answers.
   switch (id) {
-    case "gemini-1.5-pro": return "gemini-2.5-pro";
+    case "gemini-1.5-pro": return "gemini-2.5-flash";
     case "gemini-2.0-flash": return "gemini-2.5-flash";
     case "gemini-1.5-flash":
     default: return "gemini-2.5-flash";
   }
 }
+
 
 function transformGeminiStream(upstreamBody: ReadableStream<Uint8Array> | null) {
   if (!upstreamBody) return streamSingleMessage("**AI service returned an empty response.**");
@@ -711,6 +714,8 @@ function toGeminiPayload(apiMessages: any[], hasDocContext: boolean) {
     });
   }
 
+  // Latency: disable Gemini "thinking" so the first token arrives in ~1s.
+  // Grounded document answers come from the provided context, not from reasoning.
   return {
     systemInstruction: systemParts.length ? { parts: systemParts } : undefined,
     contents,
@@ -719,11 +724,13 @@ function toGeminiPayload(apiMessages: any[], hasDocContext: boolean) {
       temperature: hasDocContext ? 0 : 0.7,
       topP: hasDocContext ? 0 : 0.95,
       topK: hasDocContext ? 1 : 40,
-      maxOutputTokens: hasDocContext ? DOCUMENT_OUTPUT_TOKENS : 4096,
+      maxOutputTokens: hasDocContext ? DOCUMENT_OUTPUT_TOKENS : 2048,
+      thinkingConfig: { thinkingBudget: 0 },
     },
 
   };
 }
+
 
 async function callDirectGemini(apiMessages: any[], model: string, hasDocContext: boolean) {
   const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") || Deno.env.get("VITE_GEMINI_API_KEY");
@@ -763,9 +770,11 @@ async function callGatewayChat(apiMessages: any[], model: string, hasDocContext:
     });
   }
 
+  // Fast models first — slow pro models are not worth the extra seconds.
   const models = hasDocContext
-    ? [geminiGatewayId(model), "google/gemini-3.1-pro-preview", "google/gemini-2.5-pro", "google/gemini-2.5-flash"]
+    ? ["google/gemini-3-flash-preview", "google/gemini-2.5-flash"]
     : [geminiGatewayId(model), "google/gemini-3-flash-preview", "google/gemini-2.5-flash"];
+
   let lastError = "";
 
   for (const gatewayModel of [...new Set(models)]) {

@@ -403,9 +403,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
       let streamDone = false;
       let networkDone = false;
 
-      // Fast typewriter: keep the ChatGPT-like live feel without making users wait.
-      const REVEAL_CHARS_PER_TICK = 12;
-      const TICK_MS = 10;
+      // Fast typewriter: reveal quickly so display never lags behind the stream.
+      const REVEAL_CHARS_PER_TICK = 40;
+      const TICK_MS = 8;
+
       const flushDisplay = () => {
         setMessagesByConv((prev) => {
           const msgs = prev[convId] || [];
