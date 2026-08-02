@@ -633,7 +633,7 @@ function streamSingleMessage(content: string) {
   });
 
   return new Response(stream, {
-    headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+    headers: { ...corsHeaders, ...SSE_HEADERS },
   });
 }
 
@@ -772,7 +772,7 @@ async function callGatewayChat(apiMessages: any[], model: string, hasDocContext:
 
     if (response.ok) {
       return new Response(response.body, {
-        headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+        headers: { ...corsHeaders, ...SSE_HEADERS },
       });
     }
 
@@ -1018,7 +1018,7 @@ serve(async (req) => {
         });
       }
       return new Response(groqResp.body, {
-        headers: { ...corsHeaders, "Content-Type": "text/event-stream" },
+        headers: { ...corsHeaders, ...SSE_HEADERS },
       });
     }
 
