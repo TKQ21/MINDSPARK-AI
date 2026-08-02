@@ -652,61 +652,26 @@ function geminiDirectModel(id: string): string {
 function transformGeminiStream(upstreamBody: ReadableStream<Uint8Array> | null) {
   if (!upstreamBody) return streamSingleMessage("**AI service returned an empty response.**");
 
-  const reader = upstreamBody.getReader();
-  const decoder = new TextDecoder();
-  const encoder = new TextEncoder();
-  let finished = false;
-
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const enqueueEvent = (payload: string) => controller.enqueue(encoder.encode(`data: ${payload}\n\n`));
-      const enqueueDelta = (content: string) => enqueueEvent(JSON.stringify({ choices: [{ delta: { content } }] }));
-      const finish = () => {
-        if (finished) return;
-        enqueueEvent("[DONE]");
-        finished = true;
-      };
-      const processEvent = (raw: string) => {
-        const dataLines = raw
-          .split(/\n/)
-          .filter((line) => line.trim().startsWith("data:"))
-          .map((line) => line.replace(/^\s*data:\s?/, "").trim())
-          .filter(Boolean);
-
-        for (const data of dataLines) {
-          try {
-            const parsed = JSON.parse(data);
-            const parts = parsed?.candidates?.[0]?.content?.parts || [];
-            for (const part of parts) {
-              if (typeof part?.text === "string" && part.text) enqueueDelta(part.text);
-            }
-          } catch (_) {
-            // Ignore non-JSON keepalive/noise frames from the upstream stream.
+  const transform = sseTransform({
+    onData: (data, emit) => {
+      if (data === "[DONE]") return;
+      try {
+        const parsed = JSON.parse(data);
+        const parts = parsed?.candidates?.[0]?.content?.parts || [];
+        for (const part of parts) {
+          if (typeof part?.text === "string" && part.text) {
+            emit(JSON.stringify({ choices: [{ delta: { content: part.text } }] }));
           }
         }
-      };
-
-      let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let boundary = buffer.indexOf("\n\n");
-        while (boundary !== -1) {
-          const raw = buffer.slice(0, boundary);
-          buffer = buffer.slice(boundary + 2);
-          processEvent(raw);
-          boundary = buffer.indexOf("\n\n");
-        }
-      }
-      if (buffer.trim()) processEvent(buffer);
-      finish();
-      controller.close();
+      } catch (_) { /* keepalive / noise frame */ }
     },
   });
 
-  return new Response(stream, { headers: { ...corsHeaders, "Content-Type": "text/event-stream" } });
+  return new Response(upstreamBody.pipeThrough(transform), {
+    headers: { ...corsHeaders, ...SSE_HEADERS },
+  });
 }
+
 
 function toGeminiPayload(apiMessages: any[], hasDocContext: boolean) {
   const systemParts: Array<{ text: string }> = [];
