@@ -627,13 +627,16 @@ function streamSingleMessage(content: string) {
 }
 
 function geminiDirectModel(id: string): string {
+  // Flash across the board: pro adds several seconds of latency without
+  // improving grounded, context-based answers.
   switch (id) {
-    case "gemini-1.5-pro": return "gemini-2.5-pro";
+    case "gemini-1.5-pro": return "gemini-2.5-flash";
     case "gemini-2.0-flash": return "gemini-2.5-flash";
     case "gemini-1.5-flash":
     default: return "gemini-2.5-flash";
   }
 }
+
 
 function transformGeminiStream(upstreamBody: ReadableStream<Uint8Array> | null) {
   if (!upstreamBody) return streamSingleMessage("**AI service returned an empty response.**");
