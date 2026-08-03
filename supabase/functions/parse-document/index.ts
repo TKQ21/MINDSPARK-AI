@@ -764,7 +764,9 @@ async function parseXlsx(bytes: Uint8Array) {
     console.warn("streaming xlsx read failed, falling back to xlsx lib:", err);
   }
 
-  // Fallback for legacy .xls / .xlsb and unusual workbooks.
+  // Fallback for legacy .xls / .xlsb and unusual workbooks. The library keeps
+  // every cell in memory, so only use it for smaller files.
+  if (bytes.byteLength > 8 * 1024 * 1024) throw new Error(unreadableFileMessage);
   const workbook = XLSX.read(bytes, { type: "array", cellDates: true, cellFormula: false, cellText: false, raw: false, WTF: false } as any);
   const output: string[] = [];
 
