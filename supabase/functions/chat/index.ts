@@ -270,12 +270,18 @@ function pickRelevantChunks(
   const selected: Array<{ chunk: string; index: number; score: number }> = [];
   let totalChars = 0;
 
+  // Always pin the sheet-level aggregate blocks (they hold the exact totals,
+  // counts, numeric stats and grouped breakdowns for very large tables), but
+  // never let them eat the whole budget.
+  const PINNED_BUDGET = Math.floor(MAX_CHARS * 0.7);
   for (const item of scored) {
-    if (/^(## Sheet:|Total data rows|Columns:|### Exact value counts by column)/im.test(item.chunk)) {
+    if (/^(## Sheet:|Total data rows|Columns:|### Exact value counts by column|### Numeric statistics by column|### Grouped breakdowns|### Row sample)/im.test(item.chunk)) {
+      if (totalChars + item.chunk.length > PINNED_BUDGET && selected.length > 0) continue;
       selected.push({ ...item, score: Math.max(item.score, 50) });
       totalChars += item.chunk.length;
     }
   }
+
 
   for (const item of ranked) {
     if (selected.some((s) => s.index === item.index)) continue;

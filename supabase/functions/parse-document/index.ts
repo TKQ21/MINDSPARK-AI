@@ -249,12 +249,15 @@ async function parsePdfAccurately(bytes: Uint8Array, fileName: string) {
     console.warn("Selectable PDF extraction failed, trying vision:", err);
   }
 
-  // FAST PATH: if the PDF already has clean selectable text, skip the slow Gemini vision pass.
-  // Vision only runs for scanned PDFs / dashboards / image-only pages.
-  if (looksLikeGoodText(selectableText)) {
+  // FAST PATH: if the PDF already has clean selectable text on every page, skip
+  // the slow Gemini vision pass. Vision still runs whenever any page is
+  // image-only (scanned pages, dashboards, charts).
+  const imageOnlyPages = (selectableText.match(/\[No selectable text found on this page\]/g) || []).length;
+  if (looksLikeGoodText(selectableText) && imageOnlyPages === 0) {
     console.log("parse-document: fast path — selectable text is sufficient, skipping vision.");
     return selectableText;
   }
+
 
   try {
     const visionText = await parsePdfWithGeminiVision(bytes, fileName, selectableText);
@@ -354,20 +357,58 @@ function columnIndex(ref: string) {
   return index - 1;
 }
 
+
+// ---------------------------------------------------------------------------
+// Large tabular data (Excel / CSV) — streaming, aggregation-first summarizer.
+// A 200k-row sheet cannot be dumped row-by-row into an LLM context, so we make
+// a single pass over the rows and compute EXACT aggregates (counts, distinct
+// value counts, numeric stats, category x numeric breakdowns) while keeping a
+// verbatim sample of the head and tail rows. Aggregates are exact over ALL
+// rows, so questions like "how many rows have rating 5" are answered correctly
+// even when the raw rows are too many to include.
+// ---------------------------------------------------------------------------
+const ROW_DUMP_LIMIT = 3000; // dump every row when the table is this small
+const ROW_EDGE_SAMPLE = 300; // otherwise keep this many rows from head and tail
+const MAX_DISTINCT_TRACKED = 50_000;
+const MAX_GROUPS_TRACKED = 200;
+const CLASSIFY_SAMPLE = 300;
+
+function toNumber(value: string) {
+  if (!value) return NaN;
+  const cleaned = value.replace(/[,\s₹$€£%]/g, "");
+  if (!/^-?\d*\.?\d+(e[-+]?\d+)?$/i.test(cleaned)) return NaN;
+  return Number(cleaned);
+}
+
+interface ColumnAgg {
+  nonEmpty: number;
+  counts: Map<string, number>;
+  distinctOverflow: boolean;
+  numCount: number;
+  numSum: number;
+  numMin: number;
+  numMax: number;
+}
+
+function newColumn(): ColumnAgg {
+  return { nonEmpty: 0, counts: new Map(), distinctOverflow: false, numCount: 0, numSum: 0, numMin: Infinity, numMax: -Infinity };
+}
+
+function mdRow(cells: string[]) {
+  return `| ${cells.map((c) => String(c ?? "").replace(/\|/g, "/").trim()).join(" | ")} |`;
+}
+
 function markdownTable(rows: string[][]) {
-  const useful = rows.filter((r) => r.some((c) => c.trim()));
+  const useful = rows.filter((r) => r.some((c) => String(c ?? "").trim()));
   if (!useful.length) return "";
   const width = Math.max(...useful.map((r) => r.length));
-  const normalized = useful.map((r) => Array.from({ length: width }, (_, i) => (r[i] || "").replace(/\|/g, "/").trim()));
+  const normalized = useful.map((r) => Array.from({ length: width }, (_, i) => r[i] || ""));
   const header = normalized[0].some(Boolean) ? normalized[0] : normalized[0].map((_, i) => `Column ${i + 1}`);
-  const body = normalized.slice(1);
-  return [`| ${header.join(" | ")} |`, `| ${header.map(() => "---").join(" | ")} |`, ...body.map((r) => `| ${r.join(" | ")} |`)].join("\n");
+  return [mdRow(header), `| ${header.map(() => "---").join(" | ")} |`, ...normalized.slice(1).map(mdRow)].join("\n");
 }
 
 function numberStats(values: string[]) {
-  const nums = values
-    .map((value) => Number(String(value).replace(/[%,$₹€£\s]/g, "").replace(/,/g, "")))
-    .filter((value) => Number.isFinite(value));
+  const nums = values.map(toNumber).filter((value) => Number.isFinite(value));
   if (!nums.length) return "";
   const min = Math.min(...nums);
   const max = Math.max(...nums);
@@ -375,55 +416,367 @@ function numberStats(values: string[]) {
   return `count=${nums.length}; min=${min}; max=${max}; average=${Number(avg.toFixed(6))}`;
 }
 
-function structuredRowsToMarkdown(title: string, rows: string[][]) {
-  const useful = rows
-    .map((row) => row.map((cell) => String(cell ?? "").trim()))
-    .filter((row) => row.some(Boolean));
-  if (!useful.length) return "";
+/**
+ * Summarize an arbitrarily large table from an iterable of rows (single pass).
+ */
+async function summarizeTable(title: string, rowSource: Iterable<string[]> | AsyncIterable<string[]>): Promise<string> {
+  let header: string[] = [];
+  const columns: ColumnAgg[] = [];
+  const head: string[][] = [];
+  const tail: string[][] = [];
+  const classifySample: string[][] = [];
+  let numericCols: number[] = [];
+  let categoricalCols: number[] = [];
+  let classified = false;
+  // groups[catCol] = Map<value, { count, per numeric col: {sum,min,max,count} }>
+  const groups = new Map<number, Map<string, { count: number; stats: Map<number, { sum: number; min: number; max: number; count: number }> }>>();
+  const groupOverflow = new Set<number>();
+  let total = 0;
 
-  const maxCols = Math.max(...useful.map((row) => row.length));
-  const normalized = useful.map((row) => Array.from({ length: maxCols }, (_, index) => row[index] || ""));
-  const header = normalized[0].some(Boolean) ? normalized[0].map((h, i) => h || `Column ${i + 1}`) : Array.from({ length: maxCols }, (_, i) => `Column ${i + 1}`);
-  const body = normalized.slice(1);
-
-  const valueCountLines: string[] = [];
-  const statsLines: string[] = [];
-  for (let col = 0; col < Math.min(header.length, 60); col++) {
-    const columnValues = body.map((row) => (row[col] || "").trim()).filter(Boolean);
-    const counts = new Map<string, number>();
-    for (const value of columnValues) counts.set(value, (counts.get(value) || 0) + 1);
-    const entries = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-    if (entries.length) {
-      const allOrTop = entries.length <= 100 ? entries : entries.slice(0, 100);
-      valueCountLines.push(`- ${header[col]}: ${allOrTop.map(([value, count]) => `${value} = ${count}`).join("; ")}${entries.length > 100 ? "; ..." : ""}`);
+  const classify = () => {
+    classified = true;
+    const sample = classifySample;
+    numericCols = [];
+    categoricalCols = [];
+    for (let col = 0; col < header.length; col++) {
+      const values = sample.map((row) => (row[col] || "").trim()).filter(Boolean);
+      if (!values.length) continue;
+      const numeric = values.filter((value) => Number.isFinite(toNumber(value))).length;
+      if (numeric / values.length >= 0.6) numericCols.push(col);
+      else if (new Set(values).size <= Math.max(30, values.length * 0.15)) categoricalCols.push(col);
     }
-    const stats = numberStats(columnValues);
-    if (stats) statsLines.push(`- ${header[col]}: ${stats}`);
+    numericCols = numericCols.slice(0, 20);
+    categoricalCols = categoricalCols.slice(0, 8);
+    for (const col of categoricalCols) groups.set(col, new Map());
+    for (const row of sample) accumulateGroups(row);
+  };
+
+  const accumulateGroups = (row: string[]) => {
+    for (const catCol of categoricalCols) {
+      if (groupOverflow.has(catCol)) continue;
+      const key = (row[catCol] || "").trim();
+      if (!key) continue;
+      const map = groups.get(catCol)!;
+      let entry = map.get(key);
+      if (!entry) {
+        if (map.size >= MAX_GROUPS_TRACKED) { groupOverflow.add(catCol); continue; }
+        entry = { count: 0, stats: new Map() };
+        map.set(key, entry);
+      }
+      entry.count++;
+      for (const numCol of numericCols) {
+        const num = toNumber((row[numCol] || "").trim());
+        if (!Number.isFinite(num)) continue;
+        let stat = entry.stats.get(numCol);
+        if (!stat) { stat = { sum: 0, min: Infinity, max: -Infinity, count: 0 }; entry.stats.set(numCol, stat); }
+        stat.sum += num;
+        stat.count++;
+        if (num < stat.min) stat.min = num;
+        if (num > stat.max) stat.max = num;
+      }
+    }
+  };
+
+  for await (const rawRow of rowSource as AsyncIterable<string[]>) {
+    const row = (rawRow || []).map((cell) => String(cell ?? "").trim());
+    if (!row.some(Boolean)) continue;
+
+    if (!header.length) {
+      header = row.map((cell, index) => cell || `Column ${index + 1}`);
+      continue;
+    }
+
+    total++;
+    while (columns.length < Math.max(header.length, row.length)) columns.push(newColumn());
+    if (row.length > header.length) {
+      for (let i = header.length; i < row.length; i++) header.push(`Column ${i + 1}`);
+    }
+
+    for (let col = 0; col < row.length; col++) {
+      const value = row[col];
+      if (!value) continue;
+      const agg = columns[col];
+      agg.nonEmpty++;
+      if (agg.counts.size < MAX_DISTINCT_TRACKED) agg.counts.set(value, (agg.counts.get(value) || 0) + 1);
+      else if (agg.counts.has(value)) agg.counts.set(value, agg.counts.get(value)! + 1);
+      else agg.distinctOverflow = true;
+      const num = toNumber(value);
+      if (Number.isFinite(num)) {
+        agg.numCount++;
+        agg.numSum += num;
+        if (num < agg.numMin) agg.numMin = num;
+        if (num > agg.numMax) agg.numMax = num;
+      }
+    }
+
+    if (head.length < ROW_DUMP_LIMIT) head.push(row);
+    else {
+      tail.push(row);
+      if (tail.length > ROW_EDGE_SAMPLE) tail.shift();
+    }
+
+    if (!classified) {
+      classifySample.push(row);
+      if (classifySample.length >= CLASSIFY_SAMPLE) classify();
+    } else {
+      accumulateGroups(row);
+    }
   }
 
-  const exactRows = body.map((row, index) => [`Row ${index + 1}`, ...row]);
+  if (!header.length) return "";
+  if (!classified) classify();
+
+  const statsLines: string[] = [];
+  const valueCountLines: string[] = [];
+  for (let col = 0; col < header.length; col++) {
+    const agg = columns[col];
+    if (!agg || !agg.nonEmpty) continue;
+    if (agg.numCount) {
+      const avg = agg.numSum / agg.numCount;
+      statsLines.push(`- ${header[col]}: count=${agg.numCount}; min=${agg.numMin}; max=${agg.numMax}; sum=${Number(agg.numSum.toFixed(6))}; average=${Number(avg.toFixed(6))}`);
+    }
+    const entries = [...agg.counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    if (entries.length) {
+      const shown = entries.length <= 300 ? entries : entries.slice(0, 300);
+      valueCountLines.push(
+        `- ${header[col]} (distinct=${agg.distinctOverflow ? `${entries.length}+` : entries.length}, non-empty=${agg.nonEmpty}): ${shown.map(([value, count]) => `${value} = ${count}`).join("; ")}${entries.length > 300 ? "; ...(only the 300 most frequent values listed)" : ""}`,
+      );
+    }
+  }
+
+  const groupLines: string[] = [];
+  for (const catCol of categoricalCols) {
+    const map = groups.get(catCol);
+    if (!map || !map.size) continue;
+    const entries = [...map.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, MAX_GROUPS_TRACKED);
+    const lines = entries.map(([key, entry]) => {
+      const parts = [`rows=${entry.count}`];
+      for (const numCol of numericCols) {
+        const stat = entry.stats.get(numCol);
+        if (!stat || !stat.count) continue;
+        parts.push(`${header[numCol]}: sum=${Number(stat.sum.toFixed(6))}, avg=${Number((stat.sum / stat.count).toFixed(6))}, min=${stat.min}, max=${stat.max}`);
+      }
+      return `  - ${key} → ${parts.join("; ")}`;
+    });
+    groupLines.push(`- Grouped by ${header[catCol]}${groupOverflow.has(catCol) ? " (partial: too many distinct values)" : ""}:\n${lines.join("\n")}`);
+  }
+
+  const dumpedAll = total <= ROW_DUMP_LIMIT;
+  const rowSection = dumpedAll
+    ? `### Full row data — every row of this sheet (${total} rows)\n${markdownTable([["Row #", ...header], ...head.map((row, index) => [`Row ${index + 1}`, ...row])])}`
+    : [
+        `### Row sample — this sheet has ${total} data rows, too many to list in full.`,
+        `The aggregates above (counts, distinct value counts, numeric statistics, grouped breakdowns) are computed over ALL ${total} rows and are exact. Use them for any counting/statistical question instead of counting the sample rows below.`,
+        `#### First ${head.length} rows`,
+        markdownTable([["Row #", ...header], ...head.map((row, index) => [`Row ${index + 1}`, ...row])]),
+        `#### Last ${tail.length} rows`,
+        markdownTable([["Row #", ...header], ...tail.map((row, index) => [`Row ${total - tail.length + index + 1}`, ...row])]),
+      ].join("\n\n");
+
   return cleanText([
     `## Sheet: ${title}`,
-    `Total data rows (excluding header): ${body.length}`,
+    `Total data rows (excluding header): ${total}`,
     `Total columns: ${header.length}`,
     `Columns: ${header.join(" | ")}`,
-    statsLines.length ? `### Numeric statistics by column\n${statsLines.join("\n")}` : "",
-    valueCountLines.length ? `### Exact value counts by column\n${valueCountLines.join("\n")}` : "",
-    `### Full row data — every parsed row preserved\n${markdownTable([["Row #", ...header], ...exactRows])}`,
+    statsLines.length ? `### Numeric statistics by column (exact, over all ${total} rows)\n${statsLines.join("\n")}` : "",
+    valueCountLines.length ? `### Exact value counts by column (exact, over all ${total} rows)\n${valueCountLines.join("\n")}` : "",
+    groupLines.length ? `### Grouped breakdowns (exact, over all ${total} rows)\n${groupLines.join("\n")}` : "",
+    rowSection,
   ].filter(Boolean).join("\n\n"));
 }
 
+function structuredRowsToMarkdown(title: string, rows: string[][]) {
+  return summarizeTable(title, rows);
+}
+
+// --- Fast streaming .xlsx reader -------------------------------------------
+// XLSX.read() on a 10MB / 200k-row workbook takes ~22s and holds every cell in
+// memory. Reading the sheet XML straight out of the zip and streaming rows
+// through the summarizer does the same job in ~7s with flat memory, which is
+// what makes very large spreadsheets work at all inside the edge function.
+function normalizeNumericText(value: string) {
+  if (!/^-?\d+\.\d{6,}$/.test(value)) return value;
+  const num = Number(value);
+  return Number.isFinite(num) ? String(Number(num.toFixed(6))) : value;
+}
+
+function excelSerialToDate(serial: number) {
+  const ms = Math.round((serial - 25569) * 86400 * 1000);
+  const date = new Date(ms);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+}
+
+function parseSharedStrings(xml: string) {
+  const out: string[] = [];
+  const pattern = /<si>([\s\S]*?)<\/si>/g;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(xml))) {
+    const parts = match[1].match(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g) || [];
+    out.push(xmlDecode(parts.map((part) => part.replace(/<[^>]+>/g, "")).join("")));
+  }
+  return out;
+}
+
+function parseRowXml(rowXml: string, shared: string[]): string[] {
+  const cells: string[] = [];
+  const cellPattern = /<c([^>]*)(?:\/>|>([\s\S]*?)<\/c>)/g;
+  let cellMatch: RegExpExecArray | null;
+  while ((cellMatch = cellPattern.exec(rowXml))) {
+    const attrs = cellMatch[1] || "";
+    const body = cellMatch[2] || "";
+    const ref = attrs.match(/r="([A-Z]+)\d+"/)?.[1];
+    const type = attrs.match(/t="([^"]+)"/)?.[1] || "n";
+    let value = "";
+    if (type === "s") {
+      const index = Number(body.match(/<v>([\s\S]*?)<\/v>/)?.[1]);
+      value = shared[index] ?? "";
+    } else if (type === "inlineStr" || type === "str") {
+      value = xmlDecode(body.match(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/)?.[1] ?? body.match(/<v>([\s\S]*?)<\/v>/)?.[1] ?? "");
+    } else {
+      value = normalizeNumericText(xmlDecode(body.match(/<v>([\s\S]*?)<\/v>/)?.[1] ?? ""));
+    }
+    const index = ref ? columnIndex(ref) : cells.length;
+    while (cells.length < index) cells.push("");
+    cells[index] = value;
+  }
+  return cells;
+}
+
+// Stream a zip entry as text chunks. A 200k-row sheet decompresses to ~80MB of
+// XML; holding that as one JS string exceeds the edge function memory budget,
+// so we consume it incrementally instead.
+async function* streamZipEntryText(zip: any, name: string): AsyncGenerator<string> {
+  const entry = zip.file(name);
+  if (!entry) return;
+  const queue: string[] = [];
+  let finished = false;
+  let failure: unknown = null;
+  let wake: (() => void) | null = null;
+  const ping = () => { const fn = wake; wake = null; fn?.(); };
+
+  const stream = entry.internalStream("string");
+  stream.on("data", (chunk: string) => { queue.push(chunk); ping(); });
+  stream.on("error", (err: unknown) => { failure = err; finished = true; ping(); });
+  stream.on("end", () => { finished = true; ping(); });
+  stream.resume();
+
+  while (true) {
+    if (queue.length) { yield queue.shift()!; continue; }
+    if (finished) { if (failure) throw failure; return; }
+    await new Promise<void>((resolve) => { wake = resolve; });
+  }
+}
+
+async function* streamSheetRows(zip: any, sheetPath: string, shared: string[]): AsyncGenerator<string[]> {
+  let buffer = "";
+  for await (const chunk of streamZipEntryText(zip, sheetPath)) {
+    buffer += chunk;
+    while (true) {
+      const end = buffer.indexOf("</row>");
+      if (end === -1) break;
+      const start = buffer.indexOf("<row");
+      if (start === -1 || start > end) { buffer = buffer.slice(end + 6); continue; }
+      const rowXml = buffer.slice(start, end + 6);
+      buffer = buffer.slice(end + 6);
+      const row = parseRowXml(rowXml, shared);
+      if (row.length) yield row;
+    }
+    // Safety valve: a single row should never be this long.
+    if (buffer.length > 4_000_000) buffer = buffer.slice(-500_000);
+  }
+}
+
+// Excel stores dates as serial numbers; convert them back for date-like columns
+// so answers show real dates instead of 45658.
+async function* withDateColumns(rows: AsyncIterable<string[]>): AsyncGenerator<string[]> {
+  let dateCols: number[] | null = null;
+  for await (const row of rows) {
+    if (!dateCols) {
+      dateCols = row
+        .map((cell, index) => (/date|day|time|month|year/i.test(cell) ? index : -1))
+        .filter((index) => index >= 0);
+      yield row;
+      continue;
+    }
+    for (const col of dateCols) {
+      const value = row[col];
+      if (!value) continue;
+      const num = Number(value);
+      if (Number.isFinite(num) && num > 20000 && num < 80000) {
+        const converted = excelSerialToDate(num);
+        if (converted) row[col] = converted;
+      }
+    }
+    yield row;
+  }
+}
+
+async function parseXlsxStreaming(bytes: Uint8Array) {
+  const zip = await JSZip.loadAsync(bytes);
+  const sheetFiles = Object.keys(zip.files)
+    .filter((name) => /^xl\/worksheets\/sheet\d+\.xml$/.test(name))
+    .sort((a, b) => Number(a.match(/sheet(\d+)/)?.[1] || 0) - Number(b.match(/sheet(\d+)/)?.[1] || 0));
+  if (!sheetFiles.length) throw new Error("no worksheets in workbook");
+
+  const workbookXml = (await zip.file("xl/workbook.xml")?.async("text")) || "";
+  const sheetNames = [...workbookXml.matchAll(/<sheet[^>]*name="([^"]*)"/g)].map((m) => xmlDecode(m[1]));
+
+  let shared: string[] = [];
+  const sharedEntry = zip.file("xl/sharedStrings.xml");
+  if (sharedEntry) {
+    let sharedBuffer = "";
+    for await (const chunk of streamZipEntryText(zip, "xl/sharedStrings.xml")) {
+      sharedBuffer += chunk;
+      let end = sharedBuffer.indexOf("</si>");
+      while (end !== -1) {
+        const start = sharedBuffer.indexOf("<si");
+        if (start === -1 || start > end) { sharedBuffer = sharedBuffer.slice(end + 5); }
+        else {
+          const si = sharedBuffer.slice(start, end + 5);
+          const parts = si.match(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g) || [];
+          shared.push(xmlDecode(parts.map((part) => part.replace(/<[^>]+>/g, "")).join("")));
+          sharedBuffer = sharedBuffer.slice(end + 5);
+        }
+        end = sharedBuffer.indexOf("</si>");
+      }
+    }
+  }
+
+  const output: string[] = [];
+  for (let i = 0; i < sheetFiles.length; i++) {
+    const summary = await summarizeTable(
+      sheetNames[i] || `Sheet${i + 1}`,
+      withDateColumns(streamSheetRows(zip, sheetFiles[i], shared)),
+    );
+    if (summary) output.push(summary);
+  }
+
+  return cleanText(output.join("\n\n"));
+}
+
 async function parseXlsx(bytes: Uint8Array) {
-  const workbook = XLSX.read(bytes, { type: "array", cellDates: true, cellFormula: true, cellText: false, raw: false, WTF: false });
+  // Fast path: real OOXML workbooks (.xlsx / .xlsm) stream straight from the zip.
+  try {
+    const streamed = await parseXlsxStreaming(bytes);
+    if (streamed && streamed.length > 40) return streamed;
+  } catch (err) {
+    console.warn("streaming xlsx read failed, falling back to xlsx lib:", err);
+  }
+
+  // Fallback for legacy .xls / .xlsb and unusual workbooks. The library keeps
+  // every cell in memory, so only use it for smaller files.
+  if (bytes.byteLength > 8 * 1024 * 1024) throw new Error(unreadableFileMessage);
+  const workbook = XLSX.read(bytes, { type: "array", cellDates: true, cellFormula: false, cellText: false, raw: false, WTF: false } as any);
   const output: string[] = [];
 
   for (const sheetName of workbook.SheetNames) {
-    const sheet = workbook.Sheets[sheetName];
-    const rows = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, defval: "", raw: false })
-      .map((row: any[]) => row.map((cell) => String(cell ?? "").trim()))
-      .filter((row: string[]) => row.some(Boolean));
-    if (!rows.length) continue;
-    output.push(structuredRowsToMarkdown(sheetName, rows));
+    const sheet: any = workbook.Sheets[sheetName];
+    if (!sheet) continue;
+    const rows = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, defval: "", raw: false });
+    const summary = await summarizeTable(sheetName, rows.map((row: any[]) => row.map((cell) => String(cell ?? ""))));
+    delete workbook.Sheets[sheetName];
+    if (summary) output.push(summary);
   }
 
   return cleanText(output.join("\n\n"));
@@ -432,7 +785,7 @@ async function parseXlsx(bytes: Uint8Array) {
 // Parse CSV/TSV text (or a .xls that is actually a CSV) into the same
 // summarized structure that parseXlsx produces, so downstream chat retrieval
 // gets "Exact value counts" + full row data with accurate totals.
-function csvLikeToStructured(raw: string, fileName: string): string {
+async function csvLikeToStructured(raw: string, fileName: string): Promise<string> {
   const text = raw.replace(/^\uFEFF/, "");
   const sample = text.split(/\r?\n/).slice(0, 20).join("\n");
   const candidates = ["\t", ",", ";", "|"];
@@ -458,9 +811,18 @@ function csvLikeToStructured(raw: string, fileName: string): string {
     out.push(cur);
     return out.map((c) => c.trim());
   };
-  const rows = text.split(/\r?\n/).filter((l) => l.length > 0).map(parseLine).filter((r) => r.some(Boolean));
-  if (!rows.length) return raw.slice(0, MAX_TEXT_CHARS);
-  return structuredRowsToMarkdown(fileName, rows);
+  // Stream lines through the summarizer instead of materializing every parsed
+  // row, so multi-million-row CSVs stay within memory.
+  const lines = text.split(/\r?\n/);
+  if (!lines.some((line) => line.trim())) return raw.slice(0, MAX_TEXT_CHARS);
+  const rowIterator = (function* () {
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      yield parseLine(line);
+    }
+  })();
+  const summary = await summarizeTable(fileName, rowIterator);
+  return summary || raw.slice(0, MAX_TEXT_CHARS);
 }
 
 async function parsePptx(bytes: Uint8Array) {
@@ -484,37 +846,56 @@ async function parsePptx(bytes: Uint8Array) {
 
 async function visionExtract(bytes: Uint8Array, mimeType: string, fileName: string) {
   const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") || Deno.env.get("VITE_GEMINI_API_KEY");
-  const prompt = `Extract every readable detail from ${fileName} into clean markdown. OCR all text. For dashboards/charts, capture every visible metric, label, legend, axis, filter, table row, total, percentage, and number. Do not summarize or invent. If unreadable, respond exactly NOT_READABLE.`;
+  const prompt = `Extract every readable detail from ${fileName} into clean markdown. This may be a SCANNED page, photo of a document, handwritten note, receipt, form, screenshot or BI dashboard.
+- OCR every character of text, including small print, headers, footers, stamps, handwriting and rotated/skewed text.
+- Reproduce every table as a markdown table, row by row, with all cells (never summarize a table).
+- For dashboards/charts capture every visible metric, KPI card, label, legend, axis tick, filter and total.
+- Write numbers exactly as printed (74.32% stays 74.32%). Never round, guess or invent.
+- Number the lines you read as "Line 1:", "Line 2:", ... in reading order, so exact positions can be cited later.
+If truly nothing is readable, respond exactly NOT_READABLE.`;
 
   if (GEMINI_API_KEY) {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { inline_data: { mime_type: mimeType, data: encodeBase64(bytes) } },
-              { text: prompt },
-            ],
-          }],
-          generationConfig: { temperature: 0, topP: 0.1 },
-        }),
-      },
-    );
+    // Scanned pages benefit from a stronger model; fall back down the list on
+    // error/quota. Large images go through the Files API instead of inline base64.
+    let fileRef: { uri: string; mimeType: string } | null = null;
+    if (bytes.byteLength > 15 * 1024 * 1024) {
+      try {
+        fileRef = await uploadToGeminiFileApi(bytes, mimeType, fileName, GEMINI_API_KEY);
+      } catch (err) {
+        console.warn("Files API upload for image failed, trying inline:", err);
+      }
+    }
 
-    if (response.ok) {
-      const data = await response.json();
-      const extracted = (data.candidates?.[0]?.content?.parts || [])
-        .map((part: any) => typeof part.text === "string" ? part.text : "")
-        .join("\n")
-        .trim();
-      if (extracted && extracted !== "NOT_READABLE") return cleanText(extracted);
-    } else {
-      console.warn("direct image extraction failed, trying gateway fallback:", response.status, await response.text());
+    for (const model of ["gemini-2.5-pro", "gemini-2.5-flash"]) {
+      const filePart = fileRef
+        ? { file_data: { mime_type: fileRef.mimeType, file_uri: fileRef.uri } }
+        : { inline_data: { mime_type: mimeType, data: encodeBase64(bytes) } };
+
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [filePart, { text: prompt }] }],
+            generationConfig: { temperature: 0, topP: 0.1, maxOutputTokens: 8192 },
+          }),
+        },
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        const extracted = (data.candidates?.[0]?.content?.parts || [])
+          .map((part: any) => typeof part.text === "string" ? part.text : "")
+          .join("\n")
+          .trim();
+        if (extracted && extracted !== "NOT_READABLE") return cleanText(extracted);
+      } else {
+        console.warn(`direct image extraction failed (${model}):`, response.status, await response.text());
+      }
     }
   }
+
 
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
@@ -613,11 +994,11 @@ Deno.serve(async (req) => {
       } catch (err) {
         console.warn("XLSX parse failed, retrying as CSV text:", err);
         const raw = new TextDecoder().decode(fileBuffer);
-        extractedText = csvLikeToStructured(raw, fileName);
+        extractedText = await csvLikeToStructured(raw, fileName);
       }
     } else if (isCsvLike) {
       const raw = new TextDecoder().decode(fileBuffer);
-      extractedText = csvLikeToStructured(raw, fileName);
+      extractedText = await csvLikeToStructured(raw, fileName);
     } else if (isImage) {
       extractedText = await visionExtract(fileBytes, mimeType, fileName);
     } else if (isPDF) {
