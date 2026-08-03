@@ -618,42 +618,80 @@ function parseSharedStrings(xml: string) {
   return out;
 }
 
-function* streamSheetRows(sheetXml: string, shared: string[]): Generator<string[]> {
-  const rowPattern = /<row[^>]*>([\s\S]*?)<\/row>/g;
-  let rowMatch: RegExpExecArray | null;
-  while ((rowMatch = rowPattern.exec(sheetXml))) {
-    const inner = rowMatch[1];
-    if (!inner) continue;
-    const cells: string[] = [];
-    const cellPattern = /<c([^>]*)(?:\/>|>([\s\S]*?)<\/c>)/g;
-    let cellMatch: RegExpExecArray | null;
-    while ((cellMatch = cellPattern.exec(inner))) {
-      const attrs = cellMatch[1] || "";
-      const body = cellMatch[2] || "";
-      const ref = attrs.match(/r="([A-Z]+)\d+"/)?.[1];
-      const type = attrs.match(/t="([^"]+)"/)?.[1] || "n";
-      let value = "";
-      if (type === "s") {
-        const index = Number(body.match(/<v>([\s\S]*?)<\/v>/)?.[1]);
-        value = shared[index] ?? "";
-      } else if (type === "inlineStr" || type === "str") {
-        value = xmlDecode(body.match(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/)?.[1] ?? body.match(/<v>([\s\S]*?)<\/v>/)?.[1] ?? "");
-      } else {
-        value = normalizeNumericText(xmlDecode(body.match(/<v>([\s\S]*?)<\/v>/)?.[1] ?? ""));
-      }
-      const index = ref ? columnIndex(ref) : cells.length;
-      while (cells.length < index) cells.push("");
-      cells[index] = value;
+function parseRowXml(rowXml: string, shared: string[]): string[] {
+  const cells: string[] = [];
+  const cellPattern = /<c([^>]*)(?:\/>|>([\s\S]*?)<\/c>)/g;
+  let cellMatch: RegExpExecArray | null;
+  while ((cellMatch = cellPattern.exec(rowXml))) {
+    const attrs = cellMatch[1] || "";
+    const body = cellMatch[2] || "";
+    const ref = attrs.match(/r="([A-Z]+)\d+"/)?.[1];
+    const type = attrs.match(/t="([^"]+)"/)?.[1] || "n";
+    let value = "";
+    if (type === "s") {
+      const index = Number(body.match(/<v>([\s\S]*?)<\/v>/)?.[1]);
+      value = shared[index] ?? "";
+    } else if (type === "inlineStr" || type === "str") {
+      value = xmlDecode(body.match(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/)?.[1] ?? body.match(/<v>([\s\S]*?)<\/v>/)?.[1] ?? "");
+    } else {
+      value = normalizeNumericText(xmlDecode(body.match(/<v>([\s\S]*?)<\/v>/)?.[1] ?? ""));
     }
-    yield cells;
+    const index = ref ? columnIndex(ref) : cells.length;
+    while (cells.length < index) cells.push("");
+    cells[index] = value;
+  }
+  return cells;
+}
+
+// Stream a zip entry as text chunks. A 200k-row sheet decompresses to ~80MB of
+// XML; holding that as one JS string exceeds the edge function memory budget,
+// so we consume it incrementally instead.
+async function* streamZipEntryText(zip: any, name: string): AsyncGenerator<string> {
+  const entry = zip.file(name);
+  if (!entry) return;
+  const queue: string[] = [];
+  let finished = false;
+  let failure: unknown = null;
+  let wake: (() => void) | null = null;
+  const ping = () => { const fn = wake; wake = null; fn?.(); };
+
+  const stream = entry.internalStream("string");
+  stream.on("data", (chunk: string) => { queue.push(chunk); ping(); });
+  stream.on("error", (err: unknown) => { failure = err; finished = true; ping(); });
+  stream.on("end", () => { finished = true; ping(); });
+  stream.resume();
+
+  while (true) {
+    if (queue.length) { yield queue.shift()!; continue; }
+    if (finished) { if (failure) throw failure; return; }
+    await new Promise<void>((resolve) => { wake = resolve; });
+  }
+}
+
+async function* streamSheetRows(zip: any, sheetPath: string, shared: string[]): AsyncGenerator<string[]> {
+  let buffer = "";
+  for await (const chunk of streamZipEntryText(zip, sheetPath)) {
+    buffer += chunk;
+    while (true) {
+      const end = buffer.indexOf("</row>");
+      if (end === -1) break;
+      const start = buffer.indexOf("<row");
+      if (start === -1 || start > end) { buffer = buffer.slice(end + 6); continue; }
+      const rowXml = buffer.slice(start, end + 6);
+      buffer = buffer.slice(end + 6);
+      const row = parseRowXml(rowXml, shared);
+      if (row.length) yield row;
+    }
+    // Safety valve: a single row should never be this long.
+    if (buffer.length > 4_000_000) buffer = buffer.slice(-500_000);
   }
 }
 
 // Excel stores dates as serial numbers; convert them back for date-like columns
 // so answers show real dates instead of 45658.
-function* withDateColumns(rows: Generator<string[]>): Generator<string[]> {
+async function* withDateColumns(rows: AsyncIterable<string[]>): AsyncGenerator<string[]> {
   let dateCols: number[] | null = null;
-  for (const row of rows) {
+  for await (const row of rows) {
     if (!dateCols) {
       dateCols = row
         .map((cell, index) => (/date|day|time|month|year/i.test(cell) ? index : -1))
@@ -683,14 +721,34 @@ async function parseXlsxStreaming(bytes: Uint8Array) {
 
   const workbookXml = (await zip.file("xl/workbook.xml")?.async("text")) || "";
   const sheetNames = [...workbookXml.matchAll(/<sheet[^>]*name="([^"]*)"/g)].map((m) => xmlDecode(m[1]));
-  const sharedXml = await zip.file("xl/sharedStrings.xml")?.async("text");
-  const shared = sharedXml ? parseSharedStrings(sharedXml) : [];
+
+  let shared: string[] = [];
+  const sharedEntry = zip.file("xl/sharedStrings.xml");
+  if (sharedEntry) {
+    let sharedBuffer = "";
+    for await (const chunk of streamZipEntryText(zip, "xl/sharedStrings.xml")) {
+      sharedBuffer += chunk;
+      let end = sharedBuffer.indexOf("</si>");
+      while (end !== -1) {
+        const start = sharedBuffer.indexOf("<si");
+        if (start === -1 || start > end) { sharedBuffer = sharedBuffer.slice(end + 5); }
+        else {
+          const si = sharedBuffer.slice(start, end + 5);
+          const parts = si.match(/<t(?:\s[^>]*)?>([\s\S]*?)<\/t>/g) || [];
+          shared.push(xmlDecode(parts.map((part) => part.replace(/<[^>]+>/g, "")).join("")));
+          sharedBuffer = sharedBuffer.slice(end + 5);
+        }
+        end = sharedBuffer.indexOf("</si>");
+      }
+    }
+  }
 
   const output: string[] = [];
   for (let i = 0; i < sheetFiles.length; i++) {
-    const xml = await zip.file(sheetFiles[i])?.async("text");
-    if (!xml) continue;
-    const summary = await summarizeTable(sheetNames[i] || `Sheet${i + 1}`, withDateColumns(streamSheetRows(xml, shared)));
+    const summary = await summarizeTable(
+      sheetNames[i] || `Sheet${i + 1}`,
+      withDateColumns(streamSheetRows(zip, sheetFiles[i], shared)),
+    );
     if (summary) output.push(summary);
   }
 
