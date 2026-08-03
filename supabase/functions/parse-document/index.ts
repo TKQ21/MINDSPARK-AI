@@ -419,7 +419,7 @@ function numberStats(values: string[]) {
 /**
  * Summarize an arbitrarily large table from an iterable of rows (single pass).
  */
-function summarizeTable(title: string, rowSource: Iterable<string[]>): string {
+async function summarizeTable(title: string, rowSource: Iterable<string[]> | AsyncIterable<string[]>): Promise<string> {
   let header: string[] = [];
   const columns: ColumnAgg[] = [];
   const head: string[][] = [];
@@ -477,7 +477,7 @@ function summarizeTable(title: string, rowSource: Iterable<string[]>): string {
     }
   };
 
-  for (const rawRow of rowSource) {
+  for await (const rawRow of rowSource as AsyncIterable<string[]>) {
     const row = (rawRow || []).map((cell) => String(cell ?? "").trim());
     if (!row.some(Boolean)) continue;
 
@@ -690,7 +690,7 @@ async function parseXlsxStreaming(bytes: Uint8Array) {
   for (let i = 0; i < sheetFiles.length; i++) {
     const xml = await zip.file(sheetFiles[i])?.async("text");
     if (!xml) continue;
-    const summary = summarizeTable(sheetNames[i] || `Sheet${i + 1}`, withDateColumns(streamSheetRows(xml, shared)));
+    const summary = await summarizeTable(sheetNames[i] || `Sheet${i + 1}`, withDateColumns(streamSheetRows(xml, shared)));
     if (summary) output.push(summary);
   }
 
@@ -714,7 +714,7 @@ async function parseXlsx(bytes: Uint8Array) {
     const sheet: any = workbook.Sheets[sheetName];
     if (!sheet) continue;
     const rows = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, defval: "", raw: false });
-    const summary = summarizeTable(sheetName, rows.map((row: any[]) => row.map((cell) => String(cell ?? ""))));
+    const summary = await summarizeTable(sheetName, rows.map((row: any[]) => row.map((cell) => String(cell ?? ""))));
     delete workbook.Sheets[sheetName];
     if (summary) output.push(summary);
   }
@@ -725,7 +725,7 @@ async function parseXlsx(bytes: Uint8Array) {
 // Parse CSV/TSV text (or a .xls that is actually a CSV) into the same
 // summarized structure that parseXlsx produces, so downstream chat retrieval
 // gets "Exact value counts" + full row data with accurate totals.
-function csvLikeToStructured(raw: string, fileName: string): string {
+async function csvLikeToStructured(raw: string, fileName: string): Promise<string> {
   const text = raw.replace(/^\uFEFF/, "");
   const sample = text.split(/\r?\n/).slice(0, 20).join("\n");
   const candidates = ["\t", ",", ";", "|"];
@@ -761,7 +761,7 @@ function csvLikeToStructured(raw: string, fileName: string): string {
       yield parseLine(line);
     }
   })();
-  const summary = summarizeTable(fileName, rowIterator);
+  const summary = await summarizeTable(fileName, rowIterator);
   return summary || raw.slice(0, MAX_TEXT_CHARS);
 }
 
@@ -934,11 +934,11 @@ Deno.serve(async (req) => {
       } catch (err) {
         console.warn("XLSX parse failed, retrying as CSV text:", err);
         const raw = new TextDecoder().decode(fileBuffer);
-        extractedText = csvLikeToStructured(raw, fileName);
+        extractedText = await csvLikeToStructured(raw, fileName);
       }
     } else if (isCsvLike) {
       const raw = new TextDecoder().decode(fileBuffer);
-      extractedText = csvLikeToStructured(raw, fileName);
+      extractedText = await csvLikeToStructured(raw, fileName);
     } else if (isImage) {
       extractedText = await visionExtract(fileBytes, mimeType, fileName);
     } else if (isPDF) {
