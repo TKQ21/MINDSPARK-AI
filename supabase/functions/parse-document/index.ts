@@ -685,37 +685,56 @@ async function parsePptx(bytes: Uint8Array) {
 
 async function visionExtract(bytes: Uint8Array, mimeType: string, fileName: string) {
   const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") || Deno.env.get("VITE_GEMINI_API_KEY");
-  const prompt = `Extract every readable detail from ${fileName} into clean markdown. OCR all text. For dashboards/charts, capture every visible metric, label, legend, axis, filter, table row, total, percentage, and number. Do not summarize or invent. If unreadable, respond exactly NOT_READABLE.`;
+  const prompt = `Extract every readable detail from ${fileName} into clean markdown. This may be a SCANNED page, photo of a document, handwritten note, receipt, form, screenshot or BI dashboard.
+- OCR every character of text, including small print, headers, footers, stamps, handwriting and rotated/skewed text.
+- Reproduce every table as a markdown table, row by row, with all cells (never summarize a table).
+- For dashboards/charts capture every visible metric, KPI card, label, legend, axis tick, filter and total.
+- Write numbers exactly as printed (74.32% stays 74.32%). Never round, guess or invent.
+- Number the lines you read as "Line 1:", "Line 2:", ... in reading order, so exact positions can be cited later.
+If truly nothing is readable, respond exactly NOT_READABLE.`;
 
   if (GEMINI_API_KEY) {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{
-            parts: [
-              { inline_data: { mime_type: mimeType, data: encodeBase64(bytes) } },
-              { text: prompt },
-            ],
-          }],
-          generationConfig: { temperature: 0, topP: 0.1 },
-        }),
-      },
-    );
+    // Scanned pages benefit from a stronger model; fall back down the list on
+    // error/quota. Large images go through the Files API instead of inline base64.
+    let fileRef: { uri: string; mimeType: string } | null = null;
+    if (bytes.byteLength > 15 * 1024 * 1024) {
+      try {
+        fileRef = await uploadToGeminiFileApi(bytes, mimeType, fileName, GEMINI_API_KEY);
+      } catch (err) {
+        console.warn("Files API upload for image failed, trying inline:", err);
+      }
+    }
 
-    if (response.ok) {
-      const data = await response.json();
-      const extracted = (data.candidates?.[0]?.content?.parts || [])
-        .map((part: any) => typeof part.text === "string" ? part.text : "")
-        .join("\n")
-        .trim();
-      if (extracted && extracted !== "NOT_READABLE") return cleanText(extracted);
-    } else {
-      console.warn("direct image extraction failed, trying gateway fallback:", response.status, await response.text());
+    for (const model of ["gemini-2.5-pro", "gemini-2.5-flash"]) {
+      const filePart = fileRef
+        ? { file_data: { mime_type: fileRef.mimeType, file_uri: fileRef.uri } }
+        : { inline_data: { mime_type: mimeType, data: encodeBase64(bytes) } };
+
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [filePart, { text: prompt }] }],
+            generationConfig: { temperature: 0, topP: 0.1, maxOutputTokens: 8192 },
+          }),
+        },
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        const extracted = (data.candidates?.[0]?.content?.parts || [])
+          .map((part: any) => typeof part.text === "string" ? part.text : "")
+          .join("\n")
+          .trim();
+        if (extracted && extracted !== "NOT_READABLE") return cleanText(extracted);
+      } else {
+        console.warn(`direct image extraction failed (${model}):`, response.status, await response.text());
+      }
     }
   }
+
 
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
