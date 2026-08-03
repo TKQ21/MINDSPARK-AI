@@ -25,6 +25,7 @@ import { loadSelectedModel, saveSelectedModel, ModelId, resolveModel } from "@/l
 import { useUserPlan } from "@/hooks/useUserPlan";
 import { clearLegacyMindSparkKeys, clearUserMindSparkCache } from "@/lib/userStorage";
 import { toast } from "sonner";
+import { isClientParsableTable } from "@/lib/clientTableParse";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate } from "react-router-dom";
 
@@ -316,6 +317,19 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     return `${hours}h ${minutes}m`;
   };
 
+  const parseTableInWorker = (file: File) =>
+    new Promise<string | null>((resolve) => {
+      const worker = new Worker(new URL("../workers/tableParser.worker.ts", import.meta.url), { type: "module" });
+      const finish = (text: string | null) => { worker.terminate(); resolve(text); };
+      worker.onmessage = (event: MessageEvent<{ text?: string; error?: string }>) =>
+        finish(event.data?.text?.trim() ? event.data.text : null);
+      worker.onerror = () => finish(null);
+      file.arrayBuffer().then(
+        (bytes) => worker.postMessage({ bytes, fileName: file.name }, [bytes]),
+        () => finish(null),
+      );
+    });
+
   const handleFileUpload = async (file: File) => {
     if (file.size > MAX_FILE_MB * 1024 * 1024) {
       toast.error(`File too large. Max ${MAX_FILE_MB}MB.`);
@@ -335,7 +349,25 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ userName }) => {
     setUploadedFile({ name: file.name, url: publicUrl.publicUrl, isImage });
 
 
-    const { text: extractedText, error: parseError } = await parseDocument(publicUrl.publicUrl, file.name);
+    // Huge spreadsheets/CSVs exceed the edge function's CPU budget, so summarize
+    // them in a worker on the client and only send the compact summary upstream.
+    let extractedText: string | null = null;
+    let parseError: string | null = null;
+    if (isClientParsableTable(file.name)) {
+      setIsParsingDoc(true);
+      try {
+        extractedText = await parseTableInWorker(file);
+      } catch {
+        extractedText = null;
+      } finally {
+        setIsParsingDoc(false);
+      }
+    }
+    if (!extractedText) {
+      const server = await parseDocument(publicUrl.publicUrl, file.name);
+      extractedText = server.text;
+      parseError = server.error;
+    }
     if (extractedText) {
       setLatestDocumentContext(activeConvId, extractedText);
       if (activeConvId) await saveDocumentContextToDB(activeConvId, file.name, extractedText);
