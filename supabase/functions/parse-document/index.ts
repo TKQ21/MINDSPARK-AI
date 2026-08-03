@@ -249,12 +249,15 @@ async function parsePdfAccurately(bytes: Uint8Array, fileName: string) {
     console.warn("Selectable PDF extraction failed, trying vision:", err);
   }
 
-  // FAST PATH: if the PDF already has clean selectable text, skip the slow Gemini vision pass.
-  // Vision only runs for scanned PDFs / dashboards / image-only pages.
-  if (looksLikeGoodText(selectableText)) {
+  // FAST PATH: if the PDF already has clean selectable text on every page, skip
+  // the slow Gemini vision pass. Vision still runs whenever any page is
+  // image-only (scanned pages, dashboards, charts).
+  const imageOnlyPages = (selectableText.match(/\[No selectable text found on this page\]/g) || []).length;
+  if (looksLikeGoodText(selectableText) && imageOnlyPages === 0) {
     console.log("parse-document: fast path — selectable text is sufficient, skipping vision.");
     return selectableText;
   }
+
 
   try {
     const visionText = await parsePdfWithGeminiVision(bytes, fileName, selectableText);
