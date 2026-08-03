@@ -354,15 +354,6 @@ function columnIndex(ref: string) {
   return index - 1;
 }
 
-function markdownTable(rows: string[][]) {
-  const useful = rows.filter((r) => r.some((c) => c.trim()));
-  if (!useful.length) return "";
-  const width = Math.max(...useful.map((r) => r.length));
-  const normalized = useful.map((r) => Array.from({ length: width }, (_, i) => (r[i] || "").replace(/\|/g, "/").trim()));
-  const header = normalized[0].some(Boolean) ? normalized[0] : normalized[0].map((_, i) => `Column ${i + 1}`);
-  const body = normalized.slice(1);
-  return [`| ${header.join(" | ")} |`, `| ${header.map(() => "---").join(" | ")} |`, ...body.map((r) => `| ${r.join(" | ")} |`)].join("\n");
-}
 
 // ---------------------------------------------------------------------------
 // Large tabular data (Excel / CSV) — streaming, aggregation-first summarizer.
