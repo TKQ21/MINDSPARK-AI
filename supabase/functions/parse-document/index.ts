@@ -650,9 +650,18 @@ function csvLikeToStructured(raw: string, fileName: string): string {
     out.push(cur);
     return out.map((c) => c.trim());
   };
-  const rows = text.split(/\r?\n/).filter((l) => l.length > 0).map(parseLine).filter((r) => r.some(Boolean));
-  if (!rows.length) return raw.slice(0, MAX_TEXT_CHARS);
-  return structuredRowsToMarkdown(fileName, rows);
+  // Stream lines through the summarizer instead of materializing every parsed
+  // row, so multi-million-row CSVs stay within memory.
+  const lines = text.split(/\r?\n/);
+  if (!lines.some((line) => line.trim())) return raw.slice(0, MAX_TEXT_CHARS);
+  const rowIterator = (function* () {
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      yield parseLine(line);
+    }
+  })();
+  const summary = summarizeTable(fileName, rowIterator);
+  return summary || raw.slice(0, MAX_TEXT_CHARS);
 }
 
 async function parsePptx(bytes: Uint8Array) {
