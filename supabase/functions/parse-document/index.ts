@@ -364,10 +364,57 @@ function markdownTable(rows: string[][]) {
   return [`| ${header.join(" | ")} |`, `| ${header.map(() => "---").join(" | ")} |`, ...body.map((r) => `| ${r.join(" | ")} |`)].join("\n");
 }
 
+// ---------------------------------------------------------------------------
+// Large tabular data (Excel / CSV) — streaming, aggregation-first summarizer.
+// A 200k-row sheet cannot be dumped row-by-row into an LLM context, so we make
+// a single pass over the rows and compute EXACT aggregates (counts, distinct
+// value counts, numeric stats, category x numeric breakdowns) while keeping a
+// verbatim sample of the head and tail rows. Aggregates are exact over ALL
+// rows, so questions like "how many rows have rating 5" are answered correctly
+// even when the raw rows are too many to include.
+// ---------------------------------------------------------------------------
+const ROW_DUMP_LIMIT = 3000; // dump every row when the table is this small
+const ROW_EDGE_SAMPLE = 300; // otherwise keep this many rows from head and tail
+const MAX_DISTINCT_TRACKED = 50_000;
+const MAX_GROUPS_TRACKED = 200;
+const CLASSIFY_SAMPLE = 300;
+
+function toNumber(value: string) {
+  if (!value) return NaN;
+  const cleaned = value.replace(/[,\s₹$€£%]/g, "");
+  if (!/^-?\d*\.?\d+(e[-+]?\d+)?$/i.test(cleaned)) return NaN;
+  return Number(cleaned);
+}
+
+interface ColumnAgg {
+  nonEmpty: number;
+  counts: Map<string, number>;
+  distinctOverflow: boolean;
+  numCount: number;
+  numSum: number;
+  numMin: number;
+  numMax: number;
+}
+
+function newColumn(): ColumnAgg {
+  return { nonEmpty: 0, counts: new Map(), distinctOverflow: false, numCount: 0, numSum: 0, numMin: Infinity, numMax: -Infinity };
+}
+
+function mdRow(cells: string[]) {
+  return `| ${cells.map((c) => String(c ?? "").replace(/\|/g, "/").trim()).join(" | ")} |`;
+}
+
+function markdownTable(rows: string[][]) {
+  const useful = rows.filter((r) => r.some((c) => String(c ?? "").trim()));
+  if (!useful.length) return "";
+  const width = Math.max(...useful.map((r) => r.length));
+  const normalized = useful.map((r) => Array.from({ length: width }, (_, i) => r[i] || ""));
+  const header = normalized[0].some(Boolean) ? normalized[0] : normalized[0].map((_, i) => `Column ${i + 1}`);
+  return [mdRow(header), `| ${header.map(() => "---").join(" | ")} |`, ...normalized.slice(1).map(mdRow)].join("\n");
+}
+
 function numberStats(values: string[]) {
-  const nums = values
-    .map((value) => Number(String(value).replace(/[%,$₹€£\s]/g, "").replace(/,/g, "")))
-    .filter((value) => Number.isFinite(value));
+  const nums = values.map(toNumber).filter((value) => Number.isFinite(value));
   if (!nums.length) return "";
   const min = Math.min(...nums);
   const max = Math.max(...nums);
@@ -375,55 +422,209 @@ function numberStats(values: string[]) {
   return `count=${nums.length}; min=${min}; max=${max}; average=${Number(avg.toFixed(6))}`;
 }
 
-function structuredRowsToMarkdown(title: string, rows: string[][]) {
-  const useful = rows
-    .map((row) => row.map((cell) => String(cell ?? "").trim()))
-    .filter((row) => row.some(Boolean));
-  if (!useful.length) return "";
+/**
+ * Summarize an arbitrarily large table from an iterable of rows (single pass).
+ */
+function summarizeTable(title: string, rowSource: Iterable<string[]>): string {
+  let header: string[] = [];
+  const columns: ColumnAgg[] = [];
+  const head: string[][] = [];
+  const tail: string[][] = [];
+  const classifySample: string[][] = [];
+  let numericCols: number[] = [];
+  let categoricalCols: number[] = [];
+  let classified = false;
+  // groups[catCol] = Map<value, { count, per numeric col: {sum,min,max,count} }>
+  const groups = new Map<number, Map<string, { count: number; stats: Map<number, { sum: number; min: number; max: number; count: number }> }>>();
+  const groupOverflow = new Set<number>();
+  let total = 0;
 
-  const maxCols = Math.max(...useful.map((row) => row.length));
-  const normalized = useful.map((row) => Array.from({ length: maxCols }, (_, index) => row[index] || ""));
-  const header = normalized[0].some(Boolean) ? normalized[0].map((h, i) => h || `Column ${i + 1}`) : Array.from({ length: maxCols }, (_, i) => `Column ${i + 1}`);
-  const body = normalized.slice(1);
-
-  const valueCountLines: string[] = [];
-  const statsLines: string[] = [];
-  for (let col = 0; col < Math.min(header.length, 60); col++) {
-    const columnValues = body.map((row) => (row[col] || "").trim()).filter(Boolean);
-    const counts = new Map<string, number>();
-    for (const value of columnValues) counts.set(value, (counts.get(value) || 0) + 1);
-    const entries = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-    if (entries.length) {
-      const allOrTop = entries.length <= 100 ? entries : entries.slice(0, 100);
-      valueCountLines.push(`- ${header[col]}: ${allOrTop.map(([value, count]) => `${value} = ${count}`).join("; ")}${entries.length > 100 ? "; ..." : ""}`);
+  const classify = () => {
+    classified = true;
+    const sample = classifySample;
+    numericCols = [];
+    categoricalCols = [];
+    for (let col = 0; col < header.length; col++) {
+      const values = sample.map((row) => (row[col] || "").trim()).filter(Boolean);
+      if (!values.length) continue;
+      const numeric = values.filter((value) => Number.isFinite(toNumber(value))).length;
+      if (numeric / values.length >= 0.6) numericCols.push(col);
+      else if (new Set(values).size <= Math.max(30, values.length * 0.15)) categoricalCols.push(col);
     }
-    const stats = numberStats(columnValues);
-    if (stats) statsLines.push(`- ${header[col]}: ${stats}`);
+    numericCols = numericCols.slice(0, 20);
+    categoricalCols = categoricalCols.slice(0, 8);
+    for (const col of categoricalCols) groups.set(col, new Map());
+    for (const row of sample) accumulateGroups(row);
+  };
+
+  const accumulateGroups = (row: string[]) => {
+    for (const catCol of categoricalCols) {
+      if (groupOverflow.has(catCol)) continue;
+      const key = (row[catCol] || "").trim();
+      if (!key) continue;
+      const map = groups.get(catCol)!;
+      let entry = map.get(key);
+      if (!entry) {
+        if (map.size >= MAX_GROUPS_TRACKED) { groupOverflow.add(catCol); continue; }
+        entry = { count: 0, stats: new Map() };
+        map.set(key, entry);
+      }
+      entry.count++;
+      for (const numCol of numericCols) {
+        const num = toNumber((row[numCol] || "").trim());
+        if (!Number.isFinite(num)) continue;
+        let stat = entry.stats.get(numCol);
+        if (!stat) { stat = { sum: 0, min: Infinity, max: -Infinity, count: 0 }; entry.stats.set(numCol, stat); }
+        stat.sum += num;
+        stat.count++;
+        if (num < stat.min) stat.min = num;
+        if (num > stat.max) stat.max = num;
+      }
+    }
+  };
+
+  for (const rawRow of rowSource) {
+    const row = (rawRow || []).map((cell) => String(cell ?? "").trim());
+    if (!row.some(Boolean)) continue;
+
+    if (!header.length) {
+      header = row.map((cell, index) => cell || `Column ${index + 1}`);
+      continue;
+    }
+
+    total++;
+    while (columns.length < Math.max(header.length, row.length)) columns.push(newColumn());
+    if (row.length > header.length) {
+      for (let i = header.length; i < row.length; i++) header.push(`Column ${i + 1}`);
+    }
+
+    for (let col = 0; col < row.length; col++) {
+      const value = row[col];
+      if (!value) continue;
+      const agg = columns[col];
+      agg.nonEmpty++;
+      if (agg.counts.size < MAX_DISTINCT_TRACKED) agg.counts.set(value, (agg.counts.get(value) || 0) + 1);
+      else if (agg.counts.has(value)) agg.counts.set(value, agg.counts.get(value)! + 1);
+      else agg.distinctOverflow = true;
+      const num = toNumber(value);
+      if (Number.isFinite(num)) {
+        agg.numCount++;
+        agg.numSum += num;
+        if (num < agg.numMin) agg.numMin = num;
+        if (num > agg.numMax) agg.numMax = num;
+      }
+    }
+
+    if (head.length < ROW_DUMP_LIMIT) head.push(row);
+    else {
+      tail.push(row);
+      if (tail.length > ROW_EDGE_SAMPLE) tail.shift();
+    }
+
+    if (!classified) {
+      classifySample.push(row);
+      if (classifySample.length >= CLASSIFY_SAMPLE) classify();
+    } else {
+      accumulateGroups(row);
+    }
   }
 
-  const exactRows = body.map((row, index) => [`Row ${index + 1}`, ...row]);
+  if (!header.length) return "";
+  if (!classified) classify();
+
+  const statsLines: string[] = [];
+  const valueCountLines: string[] = [];
+  for (let col = 0; col < header.length; col++) {
+    const agg = columns[col];
+    if (!agg || !agg.nonEmpty) continue;
+    if (agg.numCount) {
+      const avg = agg.numSum / agg.numCount;
+      statsLines.push(`- ${header[col]}: count=${agg.numCount}; min=${agg.numMin}; max=${agg.numMax}; sum=${Number(agg.numSum.toFixed(6))}; average=${Number(avg.toFixed(6))}`);
+    }
+    const entries = [...agg.counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    if (entries.length) {
+      const shown = entries.length <= 300 ? entries : entries.slice(0, 300);
+      valueCountLines.push(
+        `- ${header[col]} (distinct=${agg.distinctOverflow ? `${entries.length}+` : entries.length}, non-empty=${agg.nonEmpty}): ${shown.map(([value, count]) => `${value} = ${count}`).join("; ")}${entries.length > 300 ? "; ...(only the 300 most frequent values listed)" : ""}`,
+      );
+    }
+  }
+
+  const groupLines: string[] = [];
+  for (const catCol of categoricalCols) {
+    const map = groups.get(catCol);
+    if (!map || !map.size) continue;
+    const entries = [...map.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, MAX_GROUPS_TRACKED);
+    const lines = entries.map(([key, entry]) => {
+      const parts = [`rows=${entry.count}`];
+      for (const numCol of numericCols) {
+        const stat = entry.stats.get(numCol);
+        if (!stat || !stat.count) continue;
+        parts.push(`${header[numCol]}: sum=${Number(stat.sum.toFixed(6))}, avg=${Number((stat.sum / stat.count).toFixed(6))}, min=${stat.min}, max=${stat.max}`);
+      }
+      return `  - ${key} → ${parts.join("; ")}`;
+    });
+    groupLines.push(`- Grouped by ${header[catCol]}${groupOverflow.has(catCol) ? " (partial: too many distinct values)" : ""}:\n${lines.join("\n")}`);
+  }
+
+  const dumpedAll = total <= ROW_DUMP_LIMIT;
+  const rowSection = dumpedAll
+    ? `### Full row data — every row of this sheet (${total} rows)\n${markdownTable([["Row #", ...header], ...head.map((row, index) => [`Row ${index + 1}`, ...row])])}`
+    : [
+        `### Row sample — this sheet has ${total} data rows, too many to list in full.`,
+        `The aggregates above (counts, distinct value counts, numeric statistics, grouped breakdowns) are computed over ALL ${total} rows and are exact. Use them for any counting/statistical question instead of counting the sample rows below.`,
+        `#### First ${head.length} rows`,
+        markdownTable([["Row #", ...header], ...head.map((row, index) => [`Row ${index + 1}`, ...row])]),
+        `#### Last ${tail.length} rows`,
+        markdownTable([["Row #", ...header], ...tail.map((row, index) => [`Row ${total - tail.length + index + 1}`, ...row])]),
+      ].join("\n\n");
+
   return cleanText([
     `## Sheet: ${title}`,
-    `Total data rows (excluding header): ${body.length}`,
+    `Total data rows (excluding header): ${total}`,
     `Total columns: ${header.length}`,
     `Columns: ${header.join(" | ")}`,
-    statsLines.length ? `### Numeric statistics by column\n${statsLines.join("\n")}` : "",
-    valueCountLines.length ? `### Exact value counts by column\n${valueCountLines.join("\n")}` : "",
-    `### Full row data — every parsed row preserved\n${markdownTable([["Row #", ...header], ...exactRows])}`,
+    statsLines.length ? `### Numeric statistics by column (exact, over all ${total} rows)\n${statsLines.join("\n")}` : "",
+    valueCountLines.length ? `### Exact value counts by column (exact, over all ${total} rows)\n${valueCountLines.join("\n")}` : "",
+    groupLines.length ? `### Grouped breakdowns (exact, over all ${total} rows)\n${groupLines.join("\n")}` : "",
+    rowSection,
   ].filter(Boolean).join("\n\n"));
 }
 
+function structuredRowsToMarkdown(title: string, rows: string[][]) {
+  return summarizeTable(title, rows);
+}
+
 async function parseXlsx(bytes: Uint8Array) {
-  const workbook = XLSX.read(bytes, { type: "array", cellDates: true, cellFormula: true, cellText: false, raw: false, WTF: false });
+  // dense:true keeps sheets as arrays-of-arrays (much lower memory than the
+  // default cell-object map), which is what lets 100k+ row workbooks parse
+  // inside the edge function memory budget.
+  const workbook = XLSX.read(bytes, { type: "array", dense: true, cellDates: true, cellFormula: false, cellText: false, raw: false, WTF: false } as any);
   const output: string[] = [];
 
   for (const sheetName of workbook.SheetNames) {
-    const sheet = workbook.Sheets[sheetName];
-    const rows = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, defval: "", raw: false })
-      .map((row: any[]) => row.map((cell) => String(cell ?? "").trim()))
-      .filter((row: string[]) => row.some(Boolean));
-    if (!rows.length) continue;
-    output.push(structuredRowsToMarkdown(sheetName, rows));
+    const sheet: any = workbook.Sheets[sheetName];
+    if (!sheet) continue;
+
+    const denseRows: any[][] | undefined = sheet["!data"];
+    let iterator: Iterable<string[]>;
+
+    if (Array.isArray(denseRows)) {
+      iterator = (function* () {
+        for (const row of denseRows) {
+          if (!row) continue;
+          yield row.map((cell: any) => (cell == null ? "" : String(cell.w ?? cell.v ?? "")));
+        }
+      })();
+    } else {
+      const rows = XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, defval: "", raw: false });
+      iterator = rows.map((row: any[]) => row.map((cell) => String(cell ?? "")));
+    }
+
+    const summary = summarizeTable(sheetName, iterator);
+    // Release the sheet as soon as it is summarized to keep memory flat.
+    delete workbook.Sheets[sheetName];
+    if (summary) output.push(summary);
   }
 
   return cleanText(output.join("\n\n"));
