@@ -369,11 +369,40 @@ async function pickRelevantChunksSemantic(
   return selected.sort((a, b) => a.index - b.index);
 }
 
+// Headings ("SKILLS", "EDUCATION") often land at the end of a chunk while their
+// items sit in the NEXT chunk. Pull in the immediate neighbours of every hit so
+// section content is never cut away from its heading.
+function withNeighbourChunks(
+  documentContext: string,
+  selected: Array<{ chunk: string; index: number; score: number }>,
+): Array<{ chunk: string; index: number; score: number }> {
+  const chunks = splitDocumentIntoChunks(documentContext);
+  if (!chunks.length || !selected.length) return selected;
+
+  const have = new Set(selected.map((s) => s.index));
+  const out = [...selected];
+  let total = selected.reduce((n, s) => n + s.chunk.length, 0);
+
+  for (const item of selected) {
+    for (const nb of [item.index + 1, item.index - 1]) {
+      if (nb < 0 || nb >= chunks.length || have.has(nb)) continue;
+      const chunk = chunks[nb];
+      if (total + chunk.length > RETRIEVED_CONTEXT_LIMIT) continue;
+      have.add(nb);
+      total += chunk.length;
+      out.push({ chunk, index: nb, score: item.score });
+    }
+  }
+
+  return out.sort((a, b) => a.index - b.index);
+}
+
 function buildRetrievedContext(chunks: Array<{ chunk: string; index: number; score: number }>): string {
   return chunks
     .map(({ chunk, index, score }) => `### Chunk #${index + 1} (relevance: ${typeof score === "number" ? score.toFixed(3) : score})\n${chunk}`)
     .join("\n\n---\n\n");
 }
+
 
 // Keep prompts well inside provider payload limits — oversized single-shot
 // contexts were causing upstream failures that surfaced as "AI service is busy".
@@ -797,8 +826,20 @@ async function callGatewayChat(apiMessages: any[], model: string, hasDocContext:
 // document facts, so strict "answer not available" grounding must not block them.
 function isAdvisoryQuery(message: string): boolean {
   const m = (message || "").toLowerCase();
-  return /(salary|package|ctc|lpa|stipend|expect|negotiat|interview|hire|hiring|recruit|resume|cv|cover letter|profile|career|job role|which role|suitable|fit for|eligib|improve|improvement|better|weak(ness)?|strength|suggest|suggestion|advice|advise|recommend|opinion|should i|kitni|kitna|kaise|batao ki|bata do|kya bolu|kya kahu|kya karu|sudhar|behtar|tips|roadmap|strategy|plan|prepare|preparation|chance|scope|worth|review|rate my|score my|compare me|next step)/.test(m);
+  return /(salary|package|ctc|lpa|stipend|expect|negotiat|interview|hire|hiring|recruit|cover letter|career|which role|suitable|fit for|eligib|improve|improvement|weak(ness)?|strength|suggest|suggestion|advice|advise|recommend|opinion|should i|kya bolu|kya kahu|kya karu|sudhar|behtar|tips|roadmap|strategy|prepare|preparation|chance|scope|worth|rate my|score my|compare me|next step)/.test(m);
 }
+
+// "Document ke regarding" questions: the user asks WHAT the document contains
+// about a section/topic/entity (skills, education, experience, projects, dates,
+// names, totals, summary...). These need extraction + listing of everything the
+// document says on that topic — never the strict "not found" template just
+// because a heading matched but its content landed in a neighbouring chunk.
+function isSectionQuery(message: string): boolean {
+  const m = (message || "").toLowerCase();
+  if (/(word|character|akshar|position|\bline\s*\d|\bq\s*\d|question\s*\d)/i.test(m)) return false;
+  return /(skill|education|qualification|experience|project|certificat|achievement|award|intern|training|course|degree|college|school|university|company|role|designation|responsib|summary|objective|profile|contact|email|phone|address|hobby|hobbies|language|tool|technolog|framework|subject|topic|chapter|table|list|detail|kya hai|kya kya|kaun kaun|batao|bata do|dikhao|mention|present|include|contain|about|regarding|extract|kitne|kitna|kitni|konsa|konse|name[sd]?\b|what does|what is in|tell me)/.test(m);
+}
+
 
 function detectIntent(message: string): string {
 
@@ -813,7 +854,7 @@ function detectIntent(message: string): string {
   return "general";
 }
 
-function getSystemPrompt(intent: string, hasDocContext: boolean, advisoryMode = false): string {
+function getSystemPrompt(intent: string, hasDocContext: boolean, advisoryMode = false, sectionMode = false): string {
   const base = `You are MINDSPARK AI — a world-class AI assistant with ChatGPT-level intelligence.
 
 CORE RULES:
@@ -830,6 +871,21 @@ CORE RULES:
 11. Always reply in the exact language/script style used by the user: English → English, Hindi/Devanagari → Hindi, Hinglish/Roman Hindi → Hinglish in English letters, and any other language → that same language. Never convert Roman Hinglish into Devanagari unless asked.
 12. Always cite sources or reasoning when making claims.
 13. Format responses exactly like ChatGPT — structured, clean, readable.`;
+
+  if (hasDocContext && sectionMode && !advisoryMode) {
+    return `You are MINDSPARK AI in **document extraction mode** (RAG). The user is asking what the uploaded document contains about a topic/section.
+
+📄 The uploaded document is provided as [Context]. It is your ONLY source of facts.
+
+RULES:
+1. SCAN THE WHOLE [Context] before answering — headings, bullets, tables, and the lines that FOLLOW a heading. A heading like "SKILLS" or "EDUCATION" means its content is in the lines/rows right after it (possibly in the next chunk). Always read that content and report it.
+2. NEVER answer with just the heading names. If the user asks "skills and education kya hai", list the ACTUAL skill items and the ACTUAL degree/college/year rows, verbatim from the document.
+3. Extract EVERYTHING relevant: every bullet, every row, every value. Use bullets for lists and markdown tables for tabular data. Be exhaustive, not summarised.
+4. Quote the document's own wording for key facts, names, numbers, and dates — no paraphrasing of values, no invented facts, no outside knowledge.
+5. Only if the topic genuinely appears NOWHERE in the [Context] after a full scan, reply: **Answer not available in documents.** followed by one short line listing the section headings that DO exist. Never use this reply when the content exists anywhere in the context.
+6. Reply in the user's exact language/script (English → English, Hinglish → Hinglish, Hindi → Hindi).
+7. End with a location-only citation: 📌 Source: Chunk #<n>, Page <n>.`;
+  }
 
   if (hasDocContext && advisoryMode) {
     return `You are MINDSPARK AI in **document advisory mode** — an expert consultant (career coach, recruiter, analyst) reading the user's uploaded document.
@@ -983,8 +1039,9 @@ serve(async (req) => {
     const lastUserMsg = [...messages].reverse().find((m: any) => m.role === "user");
     const latestUserText = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
     const advisoryMode = hasDocContext && isAdvisoryQuery(latestUserText);
+    const sectionMode = hasDocContext && !advisoryMode && isSectionQuery(latestUserText);
     const intent = hasDocContext ? "document" : (lastUserMsg ? detectIntent(lastUserMsg.content) : "general");
-    const systemPrompt = getSystemPrompt(intent, hasDocContext, advisoryMode);
+    const systemPrompt = getSystemPrompt(intent, hasDocContext, advisoryMode, sectionMode);
 
     const apiMessages: any[] = [{ role: "system", content: systemPrompt }];
 
@@ -1008,23 +1065,27 @@ serve(async (req) => {
       const useFullDocument = documentContext.length <= FULL_DOCUMENT_CONTEXT_LIMIT;
       const contextForPrompt = useFullDocument
         ? buildFullDocumentContext(documentContext)
-        : buildRetrievedContext(await pickRelevantChunksSemantic(documentContext, retrievalQuery, {
+        : buildRetrievedContext(withNeighbourChunks(documentContext, await pickRelevantChunksSemantic(documentContext, retrievalQuery, {
           keywords: getQueryTerms(retrievalQuery),
           expandedQueries: expandQuery(retrievalQuery),
           wantsTable: /table|list|subjects?|papers?|topics?|marks?|syllabus|details?|data|chart|figure/i.test(retrievalQuery),
-        }, Deno.env.get("LOVABLE_API_KEY")));
+        }, Deno.env.get("LOVABLE_API_KEY"))));
 
 
       const contextHeader = `[Context — ${useFullDocument ? "FULL uploaded document text" : "Relevant document excerpts because the full text is very large"}]\n\n${contextForPrompt}\n\n`;
 
       const advisoryInstructions = `[Instructions — ADVISORY / ANALYSIS MODE]\nThe user is asking for guidance, evaluation, or a recommendation based on the uploaded document (e.g. expected salary from a resume, interview strategy, profile strengths/weaknesses, next steps).\n\n1. FACTS come only from the document: list the concrete evidence you used (skills, projects, years of experience, education, role, location, achievements) and quote/label them from the context.\n2. Then REASON on top of those facts and give a clear, decisive recommendation. Here you MAY use general professional/market knowledge — this is allowed in advisory mode. Do NOT reply "Answer not available in documents." for advisory questions.\n3. Never invent document facts. If a fact is missing (e.g. city, notice period, current CTC), say it is not in the document and state the assumption you are making.\n4. Structure the answer:\n   ## 📄 Document se evidence\n   ## 🧠 Analysis\n   ## 💰 Recommendation (with a concrete range/number or action plan)\n   ## 🗣️ Interview mein kaise bolein (ready-to-use script lines, if relevant)\n   ## ⚠️ Assumptions\n5. For salary questions give a realistic range (min–expected–stretch), plus what to quote as the "expected CTC" line, and 2–3 negotiation tips tied to the document's strengths.\n6. Answer in the user's exact language/script. Be specific and practical, no vague filler.\n7. End with: 📌 Source: <chunk/page numbers used> (location only).`;
 
+      const sectionInstructions = `[Instructions — DOCUMENT EXTRACTION MODE]\nThe user wants to know what the document says about a topic/section (e.g. skills, education, experience, projects, subjects, totals, names, dates).\n\n1. Read the ENTIRE context above, including the lines/rows that come AFTER each heading. A heading alone is NOT an answer — its items are listed below it.\n2. List every relevant item VERBATIM: skill names, degree + college + year, company + role + dates, project titles + descriptions, table rows. Use bullets and markdown tables. Be exhaustive.\n3. Never reply with only heading names, and never say the data is missing when the items exist anywhere in the context.\n4. No outside knowledge, no invented facts or numbers — copy values exactly as written.\n5. Reply in the user's exact language/script.\n6. If (and only if) the topic truly does not appear anywhere above, reply **Answer not available in documents.** plus one short line naming the sections that do exist.\n7. End with a location-only citation: 📌 Source: Chunk #<n>, Page <n>.`;
+
       const strictInstructions = `[Instructions]\nAnswer using ONLY the current uploaded document context above. Current upload fully replaces older documents. Never use outside/world knowledge and never invent sentences.\n\nSTRICT GROUNDING: If the requested information is NOT present in the context above, your entire reply must be exactly:\n**Answer not available in documents.**\n(optionally followed by one short line listing the closest labels/rows that ARE present). Never guess, never substitute a nearby item.\n\nNUMBERING RULE: "Q3" / "question 3" means the item labelled Q3 / Q.3 / "3." in the document — NOT the 3rd line and NOT Q2. If the user says "line 3", use the "Line 3:" marker. If the exact asked item number does not exist in the document, reply **Answer not available in documents.** instead of answering a different number.\n\nOther rules: answer deeply, accurately, in the user's language. Tables with \`|\` are real data — read row labels and values verbatim. For numeric/count questions use "Exact value counts by column" and "Numeric statistics by column". For word/character/line-position questions use explicit "Line N" and "Word positions" markers. End with confidence (✅ High / ⚠️ Medium / ❌ Not found) and a location-only citation like "📌 Source: Chunk #3, Page 4, Paragraph 7".`;
 
       apiMessages.push({
         role: "system",
-        content: contextHeader + (advisoryMode ? advisoryInstructions : strictInstructions),
+        content: contextHeader + (advisoryMode ? advisoryInstructions : sectionMode ? sectionInstructions : strictInstructions),
       });
+
+
 
     }
 
@@ -1069,7 +1130,7 @@ serve(async (req) => {
     try {
       const directGemini = await callDirectGemini(apiMessages, model, hasDocContext, advisoryMode);
       if (directGemini.status === 200) {
-        if (hasDocContext && directGemini.body) return streamWithDocumentVerification(directGemini.body, documentContext, advisoryMode);
+        if (hasDocContext && directGemini.body) return streamWithDocumentVerification(directGemini.body, documentContext, advisoryMode || sectionMode);
         return directGemini;
       }
       console.warn("Direct Gemini route failed, using gateway fallback:", directGemini.status);
@@ -1079,7 +1140,7 @@ serve(async (req) => {
 
     const gatewayChat = await callGatewayChat(apiMessages, model, hasDocContext, advisoryMode);
     if (gatewayChat.status !== 200) return gatewayChat;
-    if (hasDocContext && gatewayChat.body) return streamWithDocumentVerification(gatewayChat.body, documentContext, advisoryMode);
+    if (hasDocContext && gatewayChat.body) return streamWithDocumentVerification(gatewayChat.body, documentContext, advisoryMode || sectionMode);
     return gatewayChat;
   } catch (e) {
     console.error("chat error:", e);
