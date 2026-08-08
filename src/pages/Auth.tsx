@@ -199,6 +199,7 @@ const Auth: React.FC = () => {
 
           <div className="text-xs text-slate-500 font-mono">
             © 2026 MINDSPARK · v3.1
+            <div className="mt-1 text-slate-500/80">Built by Mohd Kaif</div>
           </div>
         </div>
 
