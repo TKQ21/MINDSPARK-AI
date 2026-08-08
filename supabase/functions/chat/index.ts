@@ -966,17 +966,21 @@ serve(async (req) => {
     const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY");
 
     const lastUserMsg = [...messages].reverse().find((m: any) => m.role === "user");
+    const latestUserText = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
+    const advisoryMode = hasDocContext && isAdvisoryQuery(latestUserText);
     const intent = hasDocContext ? "document" : (lastUserMsg ? detectIntent(lastUserMsg.content) : "general");
-    const systemPrompt = getSystemPrompt(intent, hasDocContext);
+    const systemPrompt = getSystemPrompt(intent, hasDocContext, advisoryMode);
 
     const apiMessages: any[] = [{ role: "system", content: systemPrompt }];
 
     if (hasDocContext) {
-      const latestQuestion = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
-      const deterministicAnswer =
-        tryAnswerPositionQuestion(latestQuestion, documentContext) ||
-        tryAnswerExactValueCount(latestQuestion, documentContext);
+      const latestQuestion = latestUserText;
+      const deterministicAnswer = advisoryMode
+        ? null
+        : (tryAnswerPositionQuestion(latestQuestion, documentContext) ||
+          tryAnswerExactValueCount(latestQuestion, documentContext));
       if (deterministicAnswer) return streamSingleMessage(deterministicAnswer);
+
 
       // For follow-ups like "explain in hindi" or "aur detail do", combine
       // the last few user turns so retrieval reuses prior topic keywords.
