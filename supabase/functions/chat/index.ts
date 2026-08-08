@@ -601,7 +601,7 @@ function sseTransform(options: {
   });
 }
 
-function streamWithDocumentVerification(upstreamBody: ReadableStream<Uint8Array> | null, documentContext: string) {
+function streamWithDocumentVerification(upstreamBody: ReadableStream<Uint8Array> | null, documentContext: string, advisoryMode = false) {
   if (!upstreamBody) return streamSingleMessage("**AI service returned an empty response.**");
   let answer = "";
 
@@ -616,7 +616,7 @@ function streamWithDocumentVerification(upstreamBody: ReadableStream<Uint8Array>
       emit(data);
     },
     onFlush: (emit) => {
-      const note = buildDocumentVerificationNote(answer, documentContext);
+      const note = advisoryMode ? "" : buildDocumentVerificationNote(answer, documentContext);
       if (note) emit(JSON.stringify({ choices: [{ delta: { content: note } }] }));
     },
   });
@@ -679,7 +679,7 @@ function transformGeminiStream(upstreamBody: ReadableStream<Uint8Array> | null) 
 }
 
 
-function toGeminiPayload(apiMessages: any[], hasDocContext: boolean) {
+function toGeminiPayload(apiMessages: any[], hasDocContext: boolean, advisoryMode = false) {
   const systemParts: Array<{ text: string }> = [];
   const contents: Array<{ role: "user" | "model"; parts: Array<{ text: string }> }> = [];
 
@@ -703,9 +703,9 @@ function toGeminiPayload(apiMessages: any[], hasDocContext: boolean) {
     contents,
     generationConfig: {
       // Grounded, deterministic answers in document mode.
-      temperature: hasDocContext ? 0 : 0.7,
-      topP: hasDocContext ? 0 : 0.95,
-      topK: hasDocContext ? 1 : 40,
+      temperature: advisoryMode ? 0.4 : hasDocContext ? 0 : 0.7,
+      topP: advisoryMode ? 0.9 : hasDocContext ? 0 : 0.95,
+      topK: advisoryMode ? 32 : hasDocContext ? 1 : 40,
       maxOutputTokens: hasDocContext ? DOCUMENT_OUTPUT_TOKENS : 2048,
       thinkingConfig: { thinkingBudget: 0 },
     },
@@ -714,7 +714,7 @@ function toGeminiPayload(apiMessages: any[], hasDocContext: boolean) {
 }
 
 
-async function callDirectGemini(apiMessages: any[], model: string, hasDocContext: boolean) {
+async function callDirectGemini(apiMessages: any[], model: string, hasDocContext: boolean, advisoryMode = false) {
   const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") || Deno.env.get("VITE_GEMINI_API_KEY");
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not configured");
 
@@ -723,7 +723,7 @@ async function callDirectGemini(apiMessages: any[], model: string, hasDocContext
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(toGeminiPayload(apiMessages, hasDocContext)),
+      body: JSON.stringify(toGeminiPayload(apiMessages, hasDocContext, advisoryMode)),
     },
   );
 
@@ -743,7 +743,7 @@ async function callDirectGemini(apiMessages: any[], model: string, hasDocContext
   return transformGeminiStream(response.body);
 }
 
-async function callGatewayChat(apiMessages: any[], model: string, hasDocContext: boolean) {
+async function callGatewayChat(apiMessages: any[], model: string, hasDocContext: boolean, advisoryMode = false) {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) {
     return new Response(JSON.stringify({ error: "AI service is temporarily unavailable." }), {
@@ -770,7 +770,7 @@ async function callGatewayChat(apiMessages: any[], model: string, hasDocContext:
       body: JSON.stringify({
         model: gatewayModel,
         messages: apiMessages,
-        temperature: hasDocContext ? 0 : 0.7,
+        temperature: advisoryMode ? 0.4 : hasDocContext ? 0 : 0.7,
         max_tokens: hasDocContext ? DOCUMENT_OUTPUT_TOKENS : 4096,
         stream: true,
       }),
@@ -813,7 +813,7 @@ function detectIntent(message: string): string {
   return "general";
 }
 
-function getSystemPrompt(intent: string, hasDocContext: boolean): string {
+function getSystemPrompt(intent: string, hasDocContext: boolean, advisoryMode = false): string {
   const base = `You are MINDSPARK AI — a world-class AI assistant with ChatGPT-level intelligence.
 
 CORE RULES:
@@ -830,6 +830,21 @@ CORE RULES:
 11. Always reply in the exact language/script style used by the user: English → English, Hindi/Devanagari → Hindi, Hinglish/Roman Hindi → Hinglish in English letters, and any other language → that same language. Never convert Roman Hinglish into Devanagari unless asked.
 12. Always cite sources or reasoning when making claims.
 13. Format responses exactly like ChatGPT — structured, clean, readable.`;
+
+  if (hasDocContext && advisoryMode) {
+    return `You are MINDSPARK AI in **document advisory mode** — an expert consultant (career coach, recruiter, analyst) reading the user's uploaded document.
+
+📄 The uploaded document is provided as [Context]. All FACTS about the user come only from it.
+
+RULES:
+1. Extract the relevant facts from the [Context] first (skills, projects, experience, education, role, achievements, numbers) and show them as evidence.
+2. Then give a real, decisive recommendation. You MAY apply general professional/market knowledge for judgement (salary bands, interview norms, best practices). Never say "Answer not available in documents." here.
+3. Never invent facts about the user. If something needed is missing from the document, say so and state your assumption.
+4. For salary questions: give a range (minimum acceptable → realistic expected → stretch ask), the exact "expected CTC" line to say in an interview, and 2–3 negotiation points tied to the document's strongest skills/projects.
+5. Structure with Markdown headings, tables and bullets. Practical, specific, no filler.
+6. Reply in the user's exact language/script (English → English, Hinglish → Hinglish, Hindi → Hindi).
+7. End with a location-only citation: 📌 Source: Chunk #<n>, Page <n>.`;
+  }
 
   if (hasDocContext) {
     return `You are MINDSPARK AI in **strict document Q&A mode** (NotebookLM-style).
@@ -1052,9 +1067,9 @@ serve(async (req) => {
     // Gemini route is temporarily busy, fall back to Lovable AI instead of
     // surfacing a shared provider limit to the user.
     try {
-      const directGemini = await callDirectGemini(apiMessages, model, hasDocContext);
+      const directGemini = await callDirectGemini(apiMessages, model, hasDocContext, advisoryMode);
       if (directGemini.status === 200) {
-        if (hasDocContext && directGemini.body) return streamWithDocumentVerification(directGemini.body, documentContext);
+        if (hasDocContext && directGemini.body) return streamWithDocumentVerification(directGemini.body, documentContext, advisoryMode);
         return directGemini;
       }
       console.warn("Direct Gemini route failed, using gateway fallback:", directGemini.status);
@@ -1062,9 +1077,9 @@ serve(async (req) => {
       console.warn("Direct Gemini route unavailable, using gateway fallback:", err);
     }
 
-    const gatewayChat = await callGatewayChat(apiMessages, model, hasDocContext);
+    const gatewayChat = await callGatewayChat(apiMessages, model, hasDocContext, advisoryMode);
     if (gatewayChat.status !== 200) return gatewayChat;
-    if (hasDocContext && gatewayChat.body) return streamWithDocumentVerification(gatewayChat.body, documentContext);
+    if (hasDocContext && gatewayChat.body) return streamWithDocumentVerification(gatewayChat.body, documentContext, advisoryMode);
     return gatewayChat;
   } catch (e) {
     console.error("chat error:", e);
