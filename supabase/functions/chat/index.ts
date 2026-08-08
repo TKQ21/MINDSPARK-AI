@@ -792,7 +792,16 @@ async function callGatewayChat(apiMessages: any[], model: string, hasDocContext:
   });
 }
 
+// Advisory / consultative questions about an uploaded document (e.g. "resume ke
+// basis par kitni salary expect karun?"). These need reasoning ON TOP of the
+// document facts, so strict "answer not available" grounding must not block them.
+function isAdvisoryQuery(message: string): boolean {
+  const m = (message || "").toLowerCase();
+  return /(salary|package|ctc|lpa|stipend|expect|negotiat|interview|hire|hiring|recruit|resume|cv|cover letter|profile|career|job role|which role|suitable|fit for|eligib|improve|improvement|better|weak(ness)?|strength|suggest|suggestion|advice|advise|recommend|opinion|should i|kitni|kitna|kaise|batao ki|bata do|kya bolu|kya kahu|kya karu|sudhar|behtar|tips|roadmap|strategy|plan|prepare|preparation|chance|scope|worth|review|rate my|score my|compare me|next step)/.test(m);
+}
+
 function detectIntent(message: string): string {
+
   const msg = message.toLowerCase();
   if (/solve|math|equation|integral|derivative|calculus|algebra|geometry|trigonometry|formula/.test(msg)) return "education";
   if (/learn|study|explain|tutor|exam|quiz|homework|assignment|notes|chapter/.test(msg)) return "education";
