@@ -825,7 +825,7 @@ function detectIntent(message: string): string {
   return "general";
 }
 
-function getSystemPrompt(intent: string, hasDocContext: boolean, advisoryMode = false): string {
+function getSystemPrompt(intent: string, hasDocContext: boolean, advisoryMode = false, sectionMode = false): string {
   const base = `You are MINDSPARK AI — a world-class AI assistant with ChatGPT-level intelligence.
 
 CORE RULES:
