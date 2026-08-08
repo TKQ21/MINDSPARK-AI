@@ -1010,8 +1010,9 @@ serve(async (req) => {
     const lastUserMsg = [...messages].reverse().find((m: any) => m.role === "user");
     const latestUserText = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
     const advisoryMode = hasDocContext && isAdvisoryQuery(latestUserText);
+    const sectionMode = hasDocContext && !advisoryMode && isSectionQuery(latestUserText);
     const intent = hasDocContext ? "document" : (lastUserMsg ? detectIntent(lastUserMsg.content) : "general");
-    const systemPrompt = getSystemPrompt(intent, hasDocContext, advisoryMode);
+    const systemPrompt = getSystemPrompt(intent, hasDocContext, advisoryMode, sectionMode);
 
     const apiMessages: any[] = [{ role: "system", content: systemPrompt }];
 
