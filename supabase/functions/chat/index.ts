@@ -601,7 +601,7 @@ function sseTransform(options: {
   });
 }
 
-function streamWithDocumentVerification(upstreamBody: ReadableStream<Uint8Array> | null, documentContext: string) {
+function streamWithDocumentVerification(upstreamBody: ReadableStream<Uint8Array> | null, documentContext: string, advisoryMode = false) {
   if (!upstreamBody) return streamSingleMessage("**AI service returned an empty response.**");
   let answer = "";
 
@@ -616,7 +616,7 @@ function streamWithDocumentVerification(upstreamBody: ReadableStream<Uint8Array>
       emit(data);
     },
     onFlush: (emit) => {
-      const note = buildDocumentVerificationNote(answer, documentContext);
+      const note = advisoryMode ? "" : buildDocumentVerificationNote(answer, documentContext);
       if (note) emit(JSON.stringify({ choices: [{ delta: { content: note } }] }));
     },
   });
@@ -679,7 +679,7 @@ function transformGeminiStream(upstreamBody: ReadableStream<Uint8Array> | null) 
 }
 
 
-function toGeminiPayload(apiMessages: any[], hasDocContext: boolean) {
+function toGeminiPayload(apiMessages: any[], hasDocContext: boolean, advisoryMode = false) {
   const systemParts: Array<{ text: string }> = [];
   const contents: Array<{ role: "user" | "model"; parts: Array<{ text: string }> }> = [];
 
@@ -703,9 +703,9 @@ function toGeminiPayload(apiMessages: any[], hasDocContext: boolean) {
     contents,
     generationConfig: {
       // Grounded, deterministic answers in document mode.
-      temperature: hasDocContext ? 0 : 0.7,
-      topP: hasDocContext ? 0 : 0.95,
-      topK: hasDocContext ? 1 : 40,
+      temperature: advisoryMode ? 0.4 : hasDocContext ? 0 : 0.7,
+      topP: advisoryMode ? 0.9 : hasDocContext ? 0 : 0.95,
+      topK: advisoryMode ? 32 : hasDocContext ? 1 : 40,
       maxOutputTokens: hasDocContext ? DOCUMENT_OUTPUT_TOKENS : 2048,
       thinkingConfig: { thinkingBudget: 0 },
     },
@@ -714,7 +714,7 @@ function toGeminiPayload(apiMessages: any[], hasDocContext: boolean) {
 }
 
 
-async function callDirectGemini(apiMessages: any[], model: string, hasDocContext: boolean) {
+async function callDirectGemini(apiMessages: any[], model: string, hasDocContext: boolean, advisoryMode = false) {
   const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") || Deno.env.get("VITE_GEMINI_API_KEY");
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not configured");
 
@@ -723,7 +723,7 @@ async function callDirectGemini(apiMessages: any[], model: string, hasDocContext
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(toGeminiPayload(apiMessages, hasDocContext)),
+      body: JSON.stringify(toGeminiPayload(apiMessages, hasDocContext, advisoryMode)),
     },
   );
 
@@ -743,7 +743,7 @@ async function callDirectGemini(apiMessages: any[], model: string, hasDocContext
   return transformGeminiStream(response.body);
 }
 
-async function callGatewayChat(apiMessages: any[], model: string, hasDocContext: boolean) {
+async function callGatewayChat(apiMessages: any[], model: string, hasDocContext: boolean, advisoryMode = false) {
   const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
   if (!LOVABLE_API_KEY) {
     return new Response(JSON.stringify({ error: "AI service is temporarily unavailable." }), {
@@ -770,7 +770,7 @@ async function callGatewayChat(apiMessages: any[], model: string, hasDocContext:
       body: JSON.stringify({
         model: gatewayModel,
         messages: apiMessages,
-        temperature: hasDocContext ? 0 : 0.7,
+        temperature: advisoryMode ? 0.4 : hasDocContext ? 0 : 0.7,
         max_tokens: hasDocContext ? DOCUMENT_OUTPUT_TOKENS : 4096,
         stream: true,
       }),
@@ -792,7 +792,16 @@ async function callGatewayChat(apiMessages: any[], model: string, hasDocContext:
   });
 }
 
+// Advisory / consultative questions about an uploaded document (e.g. "resume ke
+// basis par kitni salary expect karun?"). These need reasoning ON TOP of the
+// document facts, so strict "answer not available" grounding must not block them.
+function isAdvisoryQuery(message: string): boolean {
+  const m = (message || "").toLowerCase();
+  return /(salary|package|ctc|lpa|stipend|expect|negotiat|interview|hire|hiring|recruit|resume|cv|cover letter|profile|career|job role|which role|suitable|fit for|eligib|improve|improvement|better|weak(ness)?|strength|suggest|suggestion|advice|advise|recommend|opinion|should i|kitni|kitna|kaise|batao ki|bata do|kya bolu|kya kahu|kya karu|sudhar|behtar|tips|roadmap|strategy|plan|prepare|preparation|chance|scope|worth|review|rate my|score my|compare me|next step)/.test(m);
+}
+
 function detectIntent(message: string): string {
+
   const msg = message.toLowerCase();
   if (/solve|math|equation|integral|derivative|calculus|algebra|geometry|trigonometry|formula/.test(msg)) return "education";
   if (/learn|study|explain|tutor|exam|quiz|homework|assignment|notes|chapter/.test(msg)) return "education";
@@ -804,7 +813,7 @@ function detectIntent(message: string): string {
   return "general";
 }
 
-function getSystemPrompt(intent: string, hasDocContext: boolean): string {
+function getSystemPrompt(intent: string, hasDocContext: boolean, advisoryMode = false): string {
   const base = `You are MINDSPARK AI — a world-class AI assistant with ChatGPT-level intelligence.
 
 CORE RULES:
@@ -821,6 +830,21 @@ CORE RULES:
 11. Always reply in the exact language/script style used by the user: English → English, Hindi/Devanagari → Hindi, Hinglish/Roman Hindi → Hinglish in English letters, and any other language → that same language. Never convert Roman Hinglish into Devanagari unless asked.
 12. Always cite sources or reasoning when making claims.
 13. Format responses exactly like ChatGPT — structured, clean, readable.`;
+
+  if (hasDocContext && advisoryMode) {
+    return `You are MINDSPARK AI in **document advisory mode** — an expert consultant (career coach, recruiter, analyst) reading the user's uploaded document.
+
+📄 The uploaded document is provided as [Context]. All FACTS about the user come only from it.
+
+RULES:
+1. Extract the relevant facts from the [Context] first (skills, projects, experience, education, role, achievements, numbers) and show them as evidence.
+2. Then give a real, decisive recommendation. You MAY apply general professional/market knowledge for judgement (salary bands, interview norms, best practices). Never say "Answer not available in documents." here.
+3. Never invent facts about the user. If something needed is missing from the document, say so and state your assumption.
+4. For salary questions: give a range (minimum acceptable → realistic expected → stretch ask), the exact "expected CTC" line to say in an interview, and 2–3 negotiation points tied to the document's strongest skills/projects.
+5. Structure with Markdown headings, tables and bullets. Practical, specific, no filler.
+6. Reply in the user's exact language/script (English → English, Hinglish → Hinglish, Hindi → Hindi).
+7. End with a location-only citation: 📌 Source: Chunk #<n>, Page <n>.`;
+  }
 
   if (hasDocContext) {
     return `You are MINDSPARK AI in **strict document Q&A mode** (NotebookLM-style).
@@ -957,17 +981,21 @@ serve(async (req) => {
     const GROQ_API_KEY = Deno.env.get("GROQ_API_KEY");
 
     const lastUserMsg = [...messages].reverse().find((m: any) => m.role === "user");
+    const latestUserText = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
+    const advisoryMode = hasDocContext && isAdvisoryQuery(latestUserText);
     const intent = hasDocContext ? "document" : (lastUserMsg ? detectIntent(lastUserMsg.content) : "general");
-    const systemPrompt = getSystemPrompt(intent, hasDocContext);
+    const systemPrompt = getSystemPrompt(intent, hasDocContext, advisoryMode);
 
     const apiMessages: any[] = [{ role: "system", content: systemPrompt }];
 
     if (hasDocContext) {
-      const latestQuestion = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
-      const deterministicAnswer =
-        tryAnswerPositionQuestion(latestQuestion, documentContext) ||
-        tryAnswerExactValueCount(latestQuestion, documentContext);
+      const latestQuestion = latestUserText;
+      const deterministicAnswer = advisoryMode
+        ? null
+        : (tryAnswerPositionQuestion(latestQuestion, documentContext) ||
+          tryAnswerExactValueCount(latestQuestion, documentContext));
       if (deterministicAnswer) return streamSingleMessage(deterministicAnswer);
+
 
       // For follow-ups like "explain in hindi" or "aur detail do", combine
       // the last few user turns so retrieval reuses prior topic keywords.
@@ -987,10 +1015,17 @@ serve(async (req) => {
         }, Deno.env.get("LOVABLE_API_KEY")));
 
 
+      const contextHeader = `[Context — ${useFullDocument ? "FULL uploaded document text" : "Relevant document excerpts because the full text is very large"}]\n\n${contextForPrompt}\n\n`;
+
+      const advisoryInstructions = `[Instructions — ADVISORY / ANALYSIS MODE]\nThe user is asking for guidance, evaluation, or a recommendation based on the uploaded document (e.g. expected salary from a resume, interview strategy, profile strengths/weaknesses, next steps).\n\n1. FACTS come only from the document: list the concrete evidence you used (skills, projects, years of experience, education, role, location, achievements) and quote/label them from the context.\n2. Then REASON on top of those facts and give a clear, decisive recommendation. Here you MAY use general professional/market knowledge — this is allowed in advisory mode. Do NOT reply "Answer not available in documents." for advisory questions.\n3. Never invent document facts. If a fact is missing (e.g. city, notice period, current CTC), say it is not in the document and state the assumption you are making.\n4. Structure the answer:\n   ## 📄 Document se evidence\n   ## 🧠 Analysis\n   ## 💰 Recommendation (with a concrete range/number or action plan)\n   ## 🗣️ Interview mein kaise bolein (ready-to-use script lines, if relevant)\n   ## ⚠️ Assumptions\n5. For salary questions give a realistic range (min–expected–stretch), plus what to quote as the "expected CTC" line, and 2–3 negotiation tips tied to the document's strengths.\n6. Answer in the user's exact language/script. Be specific and practical, no vague filler.\n7. End with: 📌 Source: <chunk/page numbers used> (location only).`;
+
+      const strictInstructions = `[Instructions]\nAnswer using ONLY the current uploaded document context above. Current upload fully replaces older documents. Never use outside/world knowledge and never invent sentences.\n\nSTRICT GROUNDING: If the requested information is NOT present in the context above, your entire reply must be exactly:\n**Answer not available in documents.**\n(optionally followed by one short line listing the closest labels/rows that ARE present). Never guess, never substitute a nearby item.\n\nNUMBERING RULE: "Q3" / "question 3" means the item labelled Q3 / Q.3 / "3." in the document — NOT the 3rd line and NOT Q2. If the user says "line 3", use the "Line 3:" marker. If the exact asked item number does not exist in the document, reply **Answer not available in documents.** instead of answering a different number.\n\nOther rules: answer deeply, accurately, in the user's language. Tables with \`|\` are real data — read row labels and values verbatim. For numeric/count questions use "Exact value counts by column" and "Numeric statistics by column". For word/character/line-position questions use explicit "Line N" and "Word positions" markers. End with confidence (✅ High / ⚠️ Medium / ❌ Not found) and a location-only citation like "📌 Source: Chunk #3, Page 4, Paragraph 7".`;
+
       apiMessages.push({
         role: "system",
-        content: `[Context — ${useFullDocument ? "FULL uploaded document text" : "Relevant document excerpts because the full text is very large"}]\n\n${contextForPrompt}\n\n[Instructions]\nAnswer using ONLY the current uploaded document context above. Current upload fully replaces older documents. Never use outside/world knowledge and never invent sentences.\n\nSTRICT GROUNDING: If the requested information is NOT present in the context above, your entire reply must be exactly:\n**Answer not available in documents.**\n(optionally followed by one short line listing the closest labels/rows that ARE present). Never guess, never substitute a nearby item.\n\nNUMBERING RULE: "Q3" / "question 3" means the item labelled Q3 / Q.3 / "3." in the document — NOT the 3rd line and NOT Q2. If the user says "line 3", use the "Line 3:" marker. If the exact asked item number does not exist in the document, reply **Answer not available in documents.** instead of answering a different number.\n\nOther rules: answer deeply, accurately, in the user's language. Tables with \`|\` are real data — read row labels and values verbatim. For numeric/count questions use "Exact value counts by column" and "Numeric statistics by column". For word/character/line-position questions use explicit "Line N" and "Word positions" markers. End with confidence (✅ High / ⚠️ Medium / ❌ Not found) and a location-only citation like "📌 Source: Chunk #3, Page 4, Paragraph 7".`,
+        content: contextHeader + (advisoryMode ? advisoryInstructions : strictInstructions),
       });
+
     }
 
     apiMessages.push(...messages);
@@ -1032,9 +1067,9 @@ serve(async (req) => {
     // Gemini route is temporarily busy, fall back to Lovable AI instead of
     // surfacing a shared provider limit to the user.
     try {
-      const directGemini = await callDirectGemini(apiMessages, model, hasDocContext);
+      const directGemini = await callDirectGemini(apiMessages, model, hasDocContext, advisoryMode);
       if (directGemini.status === 200) {
-        if (hasDocContext && directGemini.body) return streamWithDocumentVerification(directGemini.body, documentContext);
+        if (hasDocContext && directGemini.body) return streamWithDocumentVerification(directGemini.body, documentContext, advisoryMode);
         return directGemini;
       }
       console.warn("Direct Gemini route failed, using gateway fallback:", directGemini.status);
@@ -1042,9 +1077,9 @@ serve(async (req) => {
       console.warn("Direct Gemini route unavailable, using gateway fallback:", err);
     }
 
-    const gatewayChat = await callGatewayChat(apiMessages, model, hasDocContext);
+    const gatewayChat = await callGatewayChat(apiMessages, model, hasDocContext, advisoryMode);
     if (gatewayChat.status !== 200) return gatewayChat;
-    if (hasDocContext && gatewayChat.body) return streamWithDocumentVerification(gatewayChat.body, documentContext);
+    if (hasDocContext && gatewayChat.body) return streamWithDocumentVerification(gatewayChat.body, documentContext, advisoryMode);
     return gatewayChat;
   } catch (e) {
     console.error("chat error:", e);
