@@ -797,8 +797,20 @@ async function callGatewayChat(apiMessages: any[], model: string, hasDocContext:
 // document facts, so strict "answer not available" grounding must not block them.
 function isAdvisoryQuery(message: string): boolean {
   const m = (message || "").toLowerCase();
-  return /(salary|package|ctc|lpa|stipend|expect|negotiat|interview|hire|hiring|recruit|resume|cv|cover letter|profile|career|job role|which role|suitable|fit for|eligib|improve|improvement|better|weak(ness)?|strength|suggest|suggestion|advice|advise|recommend|opinion|should i|kitni|kitna|kaise|batao ki|bata do|kya bolu|kya kahu|kya karu|sudhar|behtar|tips|roadmap|strategy|plan|prepare|preparation|chance|scope|worth|review|rate my|score my|compare me|next step)/.test(m);
+  return /(salary|package|ctc|lpa|stipend|expect|negotiat|interview|hire|hiring|recruit|cover letter|career|which role|suitable|fit for|eligib|improve|improvement|weak(ness)?|strength|suggest|suggestion|advice|advise|recommend|opinion|should i|kya bolu|kya kahu|kya karu|sudhar|behtar|tips|roadmap|strategy|prepare|preparation|chance|scope|worth|rate my|score my|compare me|next step)/.test(m);
 }
+
+// "Document ke regarding" questions: the user asks WHAT the document contains
+// about a section/topic/entity (skills, education, experience, projects, dates,
+// names, totals, summary...). These need extraction + listing of everything the
+// document says on that topic — never the strict "not found" template just
+// because a heading matched but its content landed in a neighbouring chunk.
+function isSectionQuery(message: string): boolean {
+  const m = (message || "").toLowerCase();
+  if (/(word|character|akshar|position|\bline\s*\d|\bq\s*\d|question\s*\d)/i.test(m)) return false;
+  return /(skill|education|qualification|experience|project|certificat|achievement|award|intern|training|course|degree|college|school|university|company|role|designation|responsib|summary|objective|profile|contact|email|phone|address|hobby|hobbies|language|tool|technolog|framework|subject|topic|chapter|table|list|detail|kya hai|kya kya|kaun kaun|batao|bata do|dikhao|mention|present|include|contain|about|regarding|extract|kitne|kitna|kitni|konsa|konse|name[sd]?\b|what does|what is in|tell me)/.test(m);
+}
+
 
 function detectIntent(message: string): string {
 
