@@ -369,11 +369,40 @@ async function pickRelevantChunksSemantic(
   return selected.sort((a, b) => a.index - b.index);
 }
 
+// Headings ("SKILLS", "EDUCATION") often land at the end of a chunk while their
+// items sit in the NEXT chunk. Pull in the immediate neighbours of every hit so
+// section content is never cut away from its heading.
+function withNeighbourChunks(
+  documentContext: string,
+  selected: Array<{ chunk: string; index: number; score: number }>,
+): Array<{ chunk: string; index: number; score: number }> {
+  const chunks = splitDocumentIntoChunks(documentContext);
+  if (!chunks.length || !selected.length) return selected;
+
+  const have = new Set(selected.map((s) => s.index));
+  const out = [...selected];
+  let total = selected.reduce((n, s) => n + s.chunk.length, 0);
+
+  for (const item of selected) {
+    for (const nb of [item.index + 1, item.index - 1]) {
+      if (nb < 0 || nb >= chunks.length || have.has(nb)) continue;
+      const chunk = chunks[nb];
+      if (total + chunk.length > RETRIEVED_CONTEXT_LIMIT) continue;
+      have.add(nb);
+      total += chunk.length;
+      out.push({ chunk, index: nb, score: item.score });
+    }
+  }
+
+  return out.sort((a, b) => a.index - b.index);
+}
+
 function buildRetrievedContext(chunks: Array<{ chunk: string; index: number; score: number }>): string {
   return chunks
     .map(({ chunk, index, score }) => `### Chunk #${index + 1} (relevance: ${typeof score === "number" ? score.toFixed(3) : score})\n${chunk}`)
     .join("\n\n---\n\n");
 }
+
 
 // Keep prompts well inside provider payload limits — oversized single-shot
 // contexts were causing upstream failures that surfaced as "AI service is busy".
