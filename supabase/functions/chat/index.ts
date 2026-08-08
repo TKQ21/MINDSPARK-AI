@@ -1130,7 +1130,7 @@ serve(async (req) => {
     try {
       const directGemini = await callDirectGemini(apiMessages, model, hasDocContext, advisoryMode);
       if (directGemini.status === 200) {
-        if (hasDocContext && directGemini.body) return streamWithDocumentVerification(directGemini.body, documentContext, advisoryMode);
+        if (hasDocContext && directGemini.body) return streamWithDocumentVerification(directGemini.body, documentContext, advisoryMode || sectionMode);
         return directGemini;
       }
       console.warn("Direct Gemini route failed, using gateway fallback:", directGemini.status);
@@ -1140,7 +1140,7 @@ serve(async (req) => {
 
     const gatewayChat = await callGatewayChat(apiMessages, model, hasDocContext, advisoryMode);
     if (gatewayChat.status !== 200) return gatewayChat;
-    if (hasDocContext && gatewayChat.body) return streamWithDocumentVerification(gatewayChat.body, documentContext, advisoryMode);
+    if (hasDocContext && gatewayChat.body) return streamWithDocumentVerification(gatewayChat.body, documentContext, advisoryMode || sectionMode);
     return gatewayChat;
   } catch (e) {
     console.error("chat error:", e);
