@@ -735,7 +735,7 @@ function toGeminiPayload(apiMessages: any[], hasDocContext: boolean, advisoryMod
       temperature: advisoryMode ? 0.4 : hasDocContext ? 0 : 0.7,
       topP: advisoryMode ? 0.9 : hasDocContext ? 0 : 0.95,
       topK: advisoryMode ? 32 : hasDocContext ? 1 : 40,
-      maxOutputTokens: hasDocContext ? DOCUMENT_OUTPUT_TOKENS : 2048,
+      maxOutputTokens: hasDocContext ? DOCUMENT_OUTPUT_TOKENS : 8192,
       thinkingConfig: { thinkingBudget: 0 },
     },
 
@@ -800,7 +800,7 @@ async function callGatewayChat(apiMessages: any[], model: string, hasDocContext:
         model: gatewayModel,
         messages: apiMessages,
         temperature: advisoryMode ? 0.4 : hasDocContext ? 0 : 0.7,
-        max_tokens: hasDocContext ? DOCUMENT_OUTPUT_TOKENS : 4096,
+        max_tokens: hasDocContext ? DOCUMENT_OUTPUT_TOKENS : 8192,
         stream: true,
       }),
     });
@@ -1116,7 +1116,7 @@ serve(async (req) => {
           model,
           messages: apiMessages,
           temperature: hasDocContext ? 0 : 0.7,
-          max_tokens: hasDocContext ? DOCUMENT_OUTPUT_TOKENS : 4096,
+          max_tokens: hasDocContext ? DOCUMENT_OUTPUT_TOKENS : 8192,
           stream: true,
         }),
       });
