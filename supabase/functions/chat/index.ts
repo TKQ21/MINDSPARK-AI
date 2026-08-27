@@ -732,9 +732,9 @@ function toGeminiPayload(apiMessages: any[], hasDocContext: boolean, advisoryMod
     contents,
     generationConfig: {
       // Grounded, deterministic answers in document mode.
-      temperature: advisoryMode ? 0.4 : hasDocContext ? 0 : 0.7,
-      topP: advisoryMode ? 0.9 : hasDocContext ? 0 : 0.95,
-      topK: advisoryMode ? 32 : hasDocContext ? 1 : 40,
+      temperature: advisoryMode ? 0.4 : 0,
+      topP: advisoryMode ? 0.9 : 0,
+      topK: advisoryMode ? 32 : 1,
       maxOutputTokens: hasDocContext ? DOCUMENT_OUTPUT_TOKENS : 8192,
       thinkingConfig: { thinkingBudget: 0 },
     },
@@ -799,7 +799,7 @@ async function callGatewayChat(apiMessages: any[], model: string, hasDocContext:
       body: JSON.stringify({
         model: gatewayModel,
         messages: apiMessages,
-        temperature: advisoryMode ? 0.4 : hasDocContext ? 0 : 0.7,
+        temperature: advisoryMode ? 0.4 : 0,
         max_tokens: hasDocContext ? DOCUMENT_OUTPUT_TOKENS : 8192,
         stream: true,
       }),
@@ -877,7 +877,11 @@ TONE — talk like a smart friend, not a manual:
 - Use natural connective phrases where they fit: "lekin ek important baat", "dekho", "basically", "here's the thing", "ek chhoti si catch hai", "so what does this mean for you".
 - Mix short punchy sentences with longer ones; address the user directly as "you"/"tum/aap" matching their language.
 - Keep the structure (headings, tables, code) but let the prose in between feel human and warm — never robotic or overly formal.
-- Close with a short, natural wrap-up line or a helpful nudge instead of stopping abruptly.`;
+- Close with a short, natural wrap-up line or a helpful nudge instead of stopping abruptly.
+
+CONSISTENCY:
+- Deterministic answers: if the same question is asked again, give the SAME answer — same facts, same structure, same headings, same order of points. Do not reword or reshuffle just for variety.
+- Pick the single clearest canonical explanation for a topic and stick to it every time.`;
 
 
   if (hasDocContext && sectionMode && !advisoryMode) {
@@ -1115,7 +1119,7 @@ serve(async (req) => {
         body: JSON.stringify({
           model,
           messages: apiMessages,
-          temperature: hasDocContext ? 0 : 0.7,
+          temperature: 0,
           max_tokens: hasDocContext ? DOCUMENT_OUTPUT_TOKENS : 8192,
           stream: true,
         }),
