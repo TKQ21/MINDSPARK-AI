@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Lock, Shield, CheckCircle, XCircle, Upload, KeyRound, Settings as SettingsIcon, Inbox, RefreshCw, Eye, EyeOff } from "lucide-react";
+import { Lock, Shield, CheckCircle, XCircle, Upload, KeyRound, Settings as SettingsIcon, Inbox, RefreshCw, Users as UsersIcon, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 
 const ADMIN_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin`;
@@ -39,7 +39,7 @@ const Admin: React.FC = () => {
   const [hasPassword, setHasPassword] = useState(false);
   const [authed, setAuthed] = useState(() => sessionStorage.getItem("admin_authed") === "true");
   const [passwordHash, setPasswordHash] = useState<string>(() => sessionStorage.getItem("admin_pw_hash") || "");
-  const [tab, setTab] = useState<"requests" | "settings" | "password">("requests");
+  const [tab, setTab] = useState<"users" | "requests" | "settings" | "password">("users");
 
   useEffect(() => {
     api("status").then((s) => {
@@ -72,6 +72,7 @@ const Admin: React.FC = () => {
 
       <div className="flex gap-1 border-b border-[#30363d] px-6">
         {[
+          { k: "users", label: "Users & Activity", icon: UsersIcon },
           { k: "requests", label: "Payment Requests", icon: Inbox },
           { k: "settings", label: "QR & Settings", icon: SettingsIcon },
           { k: "password", label: "Change Password", icon: KeyRound },
@@ -88,7 +89,8 @@ const Admin: React.FC = () => {
         ))}
       </div>
 
-      <main className="p-6 max-w-5xl mx-auto">
+      <main className="p-6 max-w-6xl mx-auto">
+        {tab === "users" && <UsersTab passwordHash={passwordHash} />}
         {tab === "requests" && <RequestsTab passwordHash={passwordHash} />}
         {tab === "settings" && <SettingsTab passwordHash={passwordHash} />}
         {tab === "password" && <PasswordTab passwordHash={passwordHash} onChanged={(h) => { setPasswordHash(h); sessionStorage.setItem("admin_pw_hash", h); }} />}
@@ -250,6 +252,162 @@ const RequestsTab: React.FC<{ passwordHash: string }> = ({ passwordHash }) => {
     </div>
   );
 };
+
+/* ---------- Users Tab ---------- */
+interface AdminUser {
+  user_id: string;
+  email: string | null;
+  created_at: string;
+  last_sign_in_at: string | null;
+  plan: "free" | "pro";
+  pro_expires_at: string | null;
+  question_count: number;
+  image_gen_count: number;
+  total_queries: number;
+  last_query_at: string | null;
+}
+
+const UsersTab: React.FC<{ passwordHash: string }> = ({ passwordHash }) => {
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [totals, setTotals] = useState({ users: 0, pro: 0, free: 0, queries: 0 });
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [planFilter, setPlanFilter] = useState<"all" | "free" | "pro">("all");
+  const [openUser, setOpenUser] = useState<AdminUser | null>(null);
+  const [queries, setQueries] = useState<any[]>([]);
+  const [qLoading, setQLoading] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await api("list-users", { passwordHash });
+      setUsers(r.users || []);
+      setTotals(r.totals || { users: 0, pro: 0, free: 0, queries: 0 });
+    } catch (e: any) { toast.error(e.message); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { load(); const t = setInterval(load, 60000); return () => clearInterval(t); }, []);
+
+  const openQueries = async (u: AdminUser) => {
+    setOpenUser(u); setQueries([]); setQLoading(true);
+    try {
+      const r = await api("user-queries", { passwordHash, userId: u.user_id });
+      setQueries(r.queries || []);
+    } catch (e: any) { toast.error(e.message); }
+    finally { setQLoading(false); }
+  };
+
+  const filtered = users.filter((u) =>
+    (planFilter === "all" || u.plan === planFilter) &&
+    (!search || (u.email || "").toLowerCase().includes(search.toLowerCase()))
+  );
+
+  const fmt = (v: string | null) => (v ? new Date(v).toLocaleString() : "—");
+
+  return (
+    <div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        {[
+          { label: "Total Users", value: totals.users },
+          { label: "Pro Users", value: totals.pro },
+          { label: "Free Users", value: totals.free },
+          { label: "Total Queries", value: totals.queries },
+        ].map((s) => (
+          <div key={s.label} className="rounded-xl border border-[#30363d] bg-[#161b22] p-4">
+            <div className="text-[11px] uppercase tracking-wide text-slate-400">{s.label}</div>
+            <div className="text-2xl font-semibold text-white mt-1">{s.value}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="flex gap-2">
+          {(["all", "free", "pro"] as const).map((f) => (
+            <button key={f} onClick={() => setPlanFilter(f)} className={`px-3 py-1.5 rounded-lg text-xs capitalize border ${planFilter === f ? "bg-blue-500/20 border-blue-400/50 text-blue-200" : "bg-[#161b22] border-[#30363d] text-slate-400 hover:text-white"}`}>{f}</button>
+          ))}
+        </div>
+        <div className="flex items-center gap-3">
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search email…" className="bg-[#0d1117] border border-[#30363d] rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-blue-400" />
+          <button onClick={load} className="text-xs text-slate-400 hover:text-white flex items-center gap-1"><RefreshCw className="w-3.5 h-3.5" /> Refresh</button>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-[#30363d] overflow-x-auto">
+        <table className="w-full text-sm min-w-[820px]">
+          <thead className="bg-[#161b22] text-slate-400 text-xs uppercase">
+            <tr>
+              <th className="text-left p-3">Email</th>
+              <th className="p-3">Plan</th>
+              <th className="p-3">Queries</th>
+              <th className="p-3">Today (Q / Img)</th>
+              <th className="text-left p-3">Last Login</th>
+              <th className="text-left p-3">Last Query</th>
+              <th className="p-3">Details</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={7} className="p-6 text-center text-slate-500">Loading…</td></tr>
+            ) : filtered.length === 0 ? (
+              <tr><td colSpan={7} className="p-6 text-center text-slate-500">No users</td></tr>
+            ) : filtered.map((u) => (
+              <tr key={u.user_id} className="border-t border-[#30363d]">
+                <td className="p-3 text-slate-200">{u.email || "—"}</td>
+                <td className="p-3 text-center">
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] uppercase font-bold ${u.plan === "pro" ? "bg-emerald-500/20 text-emerald-300" : "bg-slate-500/20 text-slate-300"}`}>{u.plan}</span>
+                  {u.plan === "pro" && u.pro_expires_at && (
+                    <div className="text-[10px] text-slate-500 mt-1">till {new Date(u.pro_expires_at).toLocaleDateString()}</div>
+                  )}
+                </td>
+                <td className="p-3 text-center text-blue-300 font-medium">{u.total_queries}</td>
+                <td className="p-3 text-center text-slate-400">{u.question_count} / {u.image_gen_count}</td>
+                <td className="p-3 text-slate-400 text-xs">{fmt(u.last_sign_in_at)}</td>
+                <td className="p-3 text-slate-400 text-xs">{fmt(u.last_query_at)}</td>
+                <td className="p-3 text-center">
+                  <button onClick={() => openQueries(u)} className="px-2 py-1 rounded bg-[#0d1117] border border-[#30363d] hover:border-blue-400 text-xs text-white">View queries</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {openUser && (
+        <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" onClick={() => setOpenUser(null)}>
+          <div className="w-full max-w-2xl max-h-[80vh] overflow-y-auto rounded-2xl border border-[#30363d] bg-[#161b22] p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="text-sm font-semibold text-white">{openUser.email || openUser.user_id}</h3>
+                <p className="text-xs text-slate-400 mt-0.5">{openUser.plan.toUpperCase()} · {openUser.total_queries} total queries</p>
+              </div>
+              <button onClick={() => setOpenUser(null)} className="text-slate-400 hover:text-white text-xs">Close</button>
+            </div>
+            {qLoading ? (
+              <p className="text-xs text-slate-500 py-6 text-center">Loading queries…</p>
+            ) : queries.length === 0 ? (
+              <p className="text-xs text-slate-500 py-6 text-center">No queries yet</p>
+            ) : (
+              <ul className="space-y-2">
+                {queries.map((q) => (
+                  <li key={q.id} className="rounded-lg border border-[#30363d] bg-[#0d1117] p-3">
+                    <div className="flex items-center justify-between text-[10px] text-slate-500 mb-1">
+                      <span>{q.chat_title}</span>
+                      <span>{new Date(q.created_at).toLocaleString()}</span>
+                    </div>
+                    <p className="text-xs text-slate-200 whitespace-pre-wrap break-words">{q.content || "(empty)"}</p>
+                    {q.file_name && <p className="text-[10px] text-blue-300 mt-1">📎 {q.file_name}</p>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 
 /* ---------- Settings Tab ---------- */
 const SettingsTab: React.FC<{ passwordHash: string }> = ({ passwordHash }) => {
