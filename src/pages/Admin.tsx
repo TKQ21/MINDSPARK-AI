@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Lock, Shield, CheckCircle, XCircle, Upload, KeyRound, Settings as SettingsIcon, Inbox, RefreshCw, Eye, EyeOff } from "lucide-react";
+import { Lock, Shield, CheckCircle, XCircle, Upload, KeyRound, Settings as SettingsIcon, Inbox, RefreshCw, Users as UsersIcon, Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 
 const ADMIN_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/admin`;
@@ -39,7 +39,7 @@ const Admin: React.FC = () => {
   const [hasPassword, setHasPassword] = useState(false);
   const [authed, setAuthed] = useState(() => sessionStorage.getItem("admin_authed") === "true");
   const [passwordHash, setPasswordHash] = useState<string>(() => sessionStorage.getItem("admin_pw_hash") || "");
-  const [tab, setTab] = useState<"requests" | "settings" | "password">("requests");
+  const [tab, setTab] = useState<"users" | "requests" | "settings" | "password">("users");
 
   useEffect(() => {
     api("status").then((s) => {
@@ -72,6 +72,7 @@ const Admin: React.FC = () => {
 
       <div className="flex gap-1 border-b border-[#30363d] px-6">
         {[
+          { k: "users", label: "Users & Activity", icon: UsersIcon },
           { k: "requests", label: "Payment Requests", icon: Inbox },
           { k: "settings", label: "QR & Settings", icon: SettingsIcon },
           { k: "password", label: "Change Password", icon: KeyRound },
@@ -88,7 +89,8 @@ const Admin: React.FC = () => {
         ))}
       </div>
 
-      <main className="p-6 max-w-5xl mx-auto">
+      <main className="p-6 max-w-6xl mx-auto">
+        {tab === "users" && <UsersTab passwordHash={passwordHash} />}
         {tab === "requests" && <RequestsTab passwordHash={passwordHash} />}
         {tab === "settings" && <SettingsTab passwordHash={passwordHash} />}
         {tab === "password" && <PasswordTab passwordHash={passwordHash} onChanged={(h) => { setPasswordHash(h); sessionStorage.setItem("admin_pw_hash", h); }} />}
