@@ -109,6 +109,107 @@ serve(async (req) => {
       return json({ success: true, url: pub.publicUrl });
     }
 
+    if (action === "list-users") {
+      const db = admin();
+      const users: any[] = [];
+      let page = 1;
+      while (page <= 20) {
+        const { data, error } = await db.auth.admin.listUsers({ page, perPage: 200 });
+        if (error) return json({ error: error.message }, 500);
+        users.push(...(data?.users || []));
+        if (!data?.users || data.users.length < 200) break;
+        page++;
+      }
+
+      const [{ data: plans }, { data: convos }] = await Promise.all([
+        db.from("user_plans").select("*"),
+        db.from("conversations").select("id,user_id"),
+      ]);
+
+      const convoOwner = new Map<string, string>();
+      (convos || []).forEach((c: any) => convoOwner.set(c.id, c.user_id));
+
+      const queryCounts = new Map<string, number>();
+      const lastQueryAt = new Map<string, string>();
+      const convoIds = (convos || []).map((c: any) => c.id);
+      for (let i = 0; i < convoIds.length; i += 100) {
+        const slice = convoIds.slice(i, i + 100);
+        if (!slice.length) break;
+        const { data: msgs } = await db
+          .from("messages")
+          .select("conversation_id,created_at")
+          .eq("role", "user")
+          .in("conversation_id", slice);
+        (msgs || []).forEach((m: any) => {
+          const uid = convoOwner.get(m.conversation_id);
+          if (!uid) return;
+          queryCounts.set(uid, (queryCounts.get(uid) || 0) + 1);
+          const prev = lastQueryAt.get(uid);
+          if (!prev || m.created_at > prev) lastQueryAt.set(uid, m.created_at);
+        });
+      }
+
+      const planByUser = new Map<string, any>();
+      (plans || []).forEach((p: any) => planByUser.set(p.user_id, p));
+      const now = Date.now();
+
+      const rows = users.map((u) => {
+        const p = planByUser.get(u.id);
+        const expires = p?.pro_expires_at ? new Date(p.pro_expires_at).getTime() : null;
+        const isPro = p?.plan === "pro" && !!expires && expires > now;
+        return {
+          user_id: u.id,
+          email: u.email || p?.email || null,
+          created_at: u.created_at,
+          last_sign_in_at: u.last_sign_in_at,
+          plan: isPro ? "pro" : "free",
+          pro_expires_at: p?.pro_expires_at || null,
+          question_count: p?.question_count ?? 0,
+          image_gen_count: p?.image_gen_count ?? 0,
+          usage_reset_at: p?.usage_reset_at || null,
+          total_queries: queryCounts.get(u.id) || 0,
+          last_query_at: lastQueryAt.get(u.id) || null,
+        };
+      }).sort((a, b) => String(b.last_sign_in_at || "").localeCompare(String(a.last_sign_in_at || "")));
+
+      return json({
+        users: rows,
+        totals: {
+          users: rows.length,
+          pro: rows.filter((r) => r.plan === "pro").length,
+          free: rows.filter((r) => r.plan === "free").length,
+          queries: rows.reduce((s, r) => s + r.total_queries, 0),
+        },
+      });
+    }
+
+    if (action === "user-queries") {
+      const userId = String(body.userId || "");
+      if (!userId) return json({ error: "userId required" }, 400);
+      const db = admin();
+      const { data: convos } = await db.from("conversations").select("id,title").eq("user_id", userId);
+      const ids = (convos || []).map((c: any) => c.id);
+      if (!ids.length) return json({ queries: [] });
+      const titleById = new Map<string, string>();
+      (convos || []).forEach((c: any) => titleById.set(c.id, c.title));
+      const { data: msgs } = await db
+        .from("messages")
+        .select("id,conversation_id,content,file_name,created_at")
+        .eq("role", "user")
+        .in("conversation_id", ids)
+        .order("created_at", { ascending: false })
+        .limit(200);
+      return json({
+        queries: (msgs || []).map((m: any) => ({
+          id: m.id,
+          content: m.content,
+          file_name: m.file_name,
+          created_at: m.created_at,
+          chat_title: titleById.get(m.conversation_id) || "Chat",
+        })),
+      });
+    }
+
     if (action === "list-requests") {
       const { data } = await admin()
         .from("payment_requests")
@@ -116,6 +217,7 @@ serve(async (req) => {
         .order("submitted_at", { ascending: false });
       return json({ requests: data || [] });
     }
+
 
     if (action === "review-request") {
       const id = String(body.id || "");
