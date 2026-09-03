@@ -1065,7 +1065,10 @@ serve(async (req) => {
     const liveSearch = !hasDocContext && needsLiveSearch(latestUserText);
     const sectionMode = hasDocContext && !advisoryMode && isSectionQuery(latestUserText);
     const intent = hasDocContext ? "document" : (lastUserMsg ? detectIntent(lastUserMsg.content) : "general");
-    const systemPrompt = getSystemPrompt(intent, hasDocContext, advisoryMode, sectionMode);
+    const systemPrompt = getSystemPrompt(intent, hasDocContext, advisoryMode, sectionMode)
+      + (liveSearch
+        ? `\n\nLIVE FACTS MODE: This question is about the present. Today is ${new Date().toISOString().slice(0, 10)}. Use the live Google Search results as the source of truth and IGNORE anything you remember from training if it conflicts. Never name an outdated office-holder, price, or result. If search gives nothing reliable, say you could not verify the current information instead of guessing.`
+        : "");
 
     const apiMessages: any[] = [{ role: "system", content: systemPrompt }];
 
