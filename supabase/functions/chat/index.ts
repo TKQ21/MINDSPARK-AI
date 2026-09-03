@@ -708,7 +708,16 @@ function transformGeminiStream(upstreamBody: ReadableStream<Uint8Array> | null) 
 }
 
 
-function toGeminiPayload(apiMessages: any[], hasDocContext: boolean, advisoryMode = false) {
+// Questions about the present ("current PM of UK", "aaj ka score", latest prices,
+// news, who is X now) cannot be answered from training data — the model's
+// knowledge is frozen. For these we let Gemini use live Google Search grounding.
+function needsLiveSearch(message: string): boolean {
+  const m = (message || "").toLowerCase();
+  if (!m) return false;
+  return /(current|currently|latest|now|today|todays|today's|tonight|yesterday|this (week|month|year)|right now|abhi|aaj|aajkal|filhal|is samay|vartaman|kaun hai|kon hai|who is the (pm|prime minister|president|ceo|captain|coach)|prime minister|president of|ceo of|score|match|weather|mausam|news|khabar|price|rate|stock|share price|bitcoin|crypto|election|winner|won|release date|launched|kab aayi|kab aaya|2024|2025|2026)/.test(m);
+}
+
+function toGeminiPayload(apiMessages: any[], hasDocContext: boolean, advisoryMode = false, liveSearch = false) {
   const systemParts: Array<{ text: string }> = [];
   const contents: Array<{ role: "user" | "model"; parts: Array<{ text: string }> }> = [];
 
@@ -738,12 +747,14 @@ function toGeminiPayload(apiMessages: any[], hasDocContext: boolean, advisoryMod
       maxOutputTokens: hasDocContext ? DOCUMENT_OUTPUT_TOKENS : 8192,
       thinkingConfig: { thinkingBudget: 0 },
     },
-
+    // Live web grounding for present-day facts (never in document mode, where
+    // the answer must come only from the uploaded file).
+    tools: liveSearch && !hasDocContext ? [{ google_search: {} }] : undefined,
   };
 }
 
 
-async function callDirectGemini(apiMessages: any[], model: string, hasDocContext: boolean, advisoryMode = false) {
+async function callDirectGemini(apiMessages: any[], model: string, hasDocContext: boolean, advisoryMode = false, liveSearch = false) {
   const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY") || Deno.env.get("VITE_GEMINI_API_KEY");
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not configured");
 
@@ -752,7 +763,7 @@ async function callDirectGemini(apiMessages: any[], model: string, hasDocContext
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(toGeminiPayload(apiMessages, hasDocContext, advisoryMode)),
+      body: JSON.stringify(toGeminiPayload(apiMessages, hasDocContext, advisoryMode, liveSearch)),
     },
   );
 
@@ -1051,6 +1062,7 @@ serve(async (req) => {
     const lastUserMsg = [...messages].reverse().find((m: any) => m.role === "user");
     const latestUserText = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
     const advisoryMode = hasDocContext && isAdvisoryQuery(latestUserText);
+    const liveSearch = !hasDocContext && needsLiveSearch(latestUserText);
     const sectionMode = hasDocContext && !advisoryMode && isSectionQuery(latestUserText);
     const intent = hasDocContext ? "document" : (lastUserMsg ? detectIntent(lastUserMsg.content) : "general");
     const systemPrompt = getSystemPrompt(intent, hasDocContext, advisoryMode, sectionMode);
@@ -1140,7 +1152,7 @@ serve(async (req) => {
     // Gemini route is temporarily busy, fall back to Lovable AI instead of
     // surfacing a shared provider limit to the user.
     try {
-      const directGemini = await callDirectGemini(apiMessages, model, hasDocContext, advisoryMode);
+      const directGemini = await callDirectGemini(apiMessages, model, hasDocContext, advisoryMode, liveSearch);
       if (directGemini.status === 200) {
         if (hasDocContext && directGemini.body) return streamWithDocumentVerification(directGemini.body, documentContext, advisoryMode || sectionMode);
         return directGemini;
